@@ -1,0 +1,14 @@
+2c2
+< kind: ClusterRole
+---
+> kind: Role
+43,51d42
+< 
+< - apiGroups:
+<   - ""
+<   resources:
+<   - events
+<   verbs:
+<   - create
+<   - update
+<   - patch
