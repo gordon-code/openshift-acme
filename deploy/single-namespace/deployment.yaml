@@ -16,13 +16,17 @@ spec:
       labels:
         app: openshift-acme
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: openshift-acme
       containers:
       - name: openshift-acme
-        image: quay.io/tnozicka/openshift-acme:controller
+        image: ghcr.io/gordon-code/openshift-acme-controller:latest
         imagePullPolicy: Always
         args:
-        - --exposer-image=quay.io/tnozicka/openshift-acme:exposer
+        - --exposer-image=ghcr.io/gordon-code/openshift-acme-exposer:latest
         - --loglevel=4
         - --namespace=$(CURRENT_NAMESPACE)
         env:
@@ -30,3 +34,15 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: tmp
+        emptyDir: {}

@@ -848,6 +848,20 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 				podSelector := &metav1.LabelSelector{
 					MatchLabels: podLabels,
 				}
+				falseVal := false
+				podSecurityContext := &corev1.PodSecurityContext{
+					RunAsNonRoot: &trueVal,
+					SeccompProfile: &corev1.SeccompProfile{
+						Type: corev1.SeccompProfileTypeRuntimeDefault,
+					},
+				}
+				containerSecurityContext := &corev1.SecurityContext{
+					AllowPrivilegeEscalation: &falseVal,
+					ReadOnlyRootFilesystem:   &trueVal,
+					Capabilities: &corev1.Capabilities{
+						Drop: []corev1.Capability{"ALL"},
+					},
+				}
 				desiredExposerRS := &appsv1.ReplicaSet{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:            tmpName,
@@ -869,6 +883,7 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 								Labels: podLabels,
 							},
 							Spec: corev1.PodSpec{
+								SecurityContext: podSecurityContext,
 								Containers: []corev1.Container{
 									{
 										Name:  "exposer",
@@ -903,6 +918,7 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 												corev1.ResourceMemory: *resource.NewQuantity(50*(1024*1024), resource.BinarySI),
 											},
 										},
+										SecurityContext: containerSecurityContext,
 									},
 								},
 								Volumes: []corev1.Volume{
