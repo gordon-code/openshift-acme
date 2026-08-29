@@ -1,3 +1,5 @@
+// Package signals provides a shared, once-initialized channel that closes on
+// SIGINT/SIGABRT/SIGTERM to trigger graceful shutdown.
 package signals
 
 import (

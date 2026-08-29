@@ -1,3 +1,5 @@
+// Package route provides helpers for inspecting OpenShift Route status. It is
+// distinct from the Route reconciliation logic in pkg/controller/route.
 package route
 
 import (

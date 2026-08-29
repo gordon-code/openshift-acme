@@ -1,3 +1,5 @@
+// Package kube provides an OpenShift Route informer factory scoped to one or
+// more namespaces.
 package kube
 
 import (

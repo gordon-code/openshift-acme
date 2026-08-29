@@ -1,4 +1,6 @@
-package openshift_acme_controller
+// Package openshiftacmecontroller implements the openshift-acme-controller
+// command, which reconciles Routes annotated for automatic TLS provisioning.
+package openshiftacmecontroller
 
 import (
 	"context"
@@ -71,7 +73,7 @@ func NewOptions(streams genericclioptions.IOStreams) *Options {
 		CertOrderBackoffMax:         24 * time.Hour,
 		CertDefaultRSAKeyBitSize:    4096,
 
-		Annotation:       api.DefaultTlsAcmeAnnotation,
+		Annotation:       api.DefaultTLSAcmeAnnotation,
 		AcmeOrderTimeout: 15 * time.Minute,
 
 		ExposerImage: "",

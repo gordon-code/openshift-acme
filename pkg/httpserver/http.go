@@ -1,3 +1,5 @@
+// Package httpserver implements the minimal HTTP server the exposer uses to
+// serve ACME HTTP-01 challenge responses.
 package httpserver
 
 import (
@@ -65,8 +67,6 @@ func (s *Server) handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNotFound)
-
-	return
 }
 
 func (s *Server) ParseData(data []byte) error {

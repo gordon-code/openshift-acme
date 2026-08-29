@@ -1,3 +1,5 @@
+// Package route implements the RouteController that reconciles OpenShift
+// Routes annotated for automatic TLS certificate provisioning via ACME.
 package route
 
 import (
@@ -336,8 +338,6 @@ func (rc *RouteController) updateSecret(old, cur interface{}) {
 		// For other Secret changes (like the exposer one) we need to requeue the Route
 		rc.enqueueRoute(route)
 	}
-
-	return
 }
 
 func (rc *RouteController) deleteSecret(obj interface{}) {
@@ -578,7 +578,7 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 		status.ProvisioningStatus.OrderStatus = ""
 
 	case acme.StatusInvalid, acme.StatusExpired, acme.StatusRevoked, acme.StatusDeactivated:
-		delay := status.ProvisioningStatus.EarliestAttemptAt.Sub(time.Now())
+		delay := time.Until(status.ProvisioningStatus.EarliestAttemptAt)
 		klog.Infof("route %s, now: %v, EarliestAttemptAt: %v, delay: %v", key, time.Now(), status.ProvisioningStatus.EarliestAttemptAt, delay)
 		if delay > 0 {
 			klog.V(2).Infof("Retrying validation for Route %s got rate limited, next attempt in %v", key, delay)
@@ -673,7 +673,6 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 
 			switch authz.Status {
 			case acme.StatusPending:
-				break
 
 			case acme.StatusValid, acme.StatusInvalid, acme.StatusDeactivated, acme.StatusExpired, acme.StatusRevoked:
 				continue
@@ -738,7 +737,7 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 				if desiredExposerRoute.Annotations == nil {
 					desiredExposerRoute.Annotations = map[string]string{}
 				}
-				desiredExposerRoute.Annotations[api.AcmeExposerId] = id
+				desiredExposerRoute.Annotations[api.AcmeExposerID] = id
 				desiredExposerRoute.Annotations[api.AcmeExposerKey] = key
 				if desiredExposerRoute.Labels == nil {
 					desiredExposerRoute.Labels = map[string]string{}
@@ -777,11 +776,11 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 				}
 
 				// Check the id to avoid collisions
-				exposerRouteId, ok := exposerRoute.Annotations[api.AcmeExposerId]
+				exposerRouteID, ok := exposerRoute.Annotations[api.AcmeExposerID]
 				if !ok {
 					return fmt.Errorf("exposer route %s/%s misses exposer id", exposerRoute.Namespace, exposerRoute.Name)
-				} else if exposerRouteId != id {
-					return fmt.Errorf("exposer route %s/%s id missmatch: expected %q, got %q", exposerRoute.Namespace, exposerRoute.Name, id, exposerRouteId)
+				} else if exposerRouteID != id {
+					return fmt.Errorf("exposer route %s/%s id missmatch: expected %q, got %q", exposerRoute.Namespace, exposerRoute.Name, id, exposerRouteID)
 				}
 
 				ownerRefToExposerRoute := metav1.OwnerReference{
@@ -800,7 +799,7 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 						Name:            tmpName,
 						OwnerReferences: []metav1.OwnerReference{ownerRefToExposerRoute},
 						Annotations: map[string]string{
-							api.AcmeExposerId:  id,
+							api.AcmeExposerID:  id,
 							api.AcmeExposerKey: key,
 						},
 						Labels: map[string]string{
@@ -831,11 +830,11 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 				}
 
 				// Check the id to avoid collisions
-				exposerSecretId, ok := exposerSecret.Annotations[api.AcmeExposerId]
+				exposerSecretID, ok := exposerSecret.Annotations[api.AcmeExposerID]
 				if !ok {
 					return fmt.Errorf("exposer secret %s/%s misses exposer id", exposerRoute.Namespace, exposerRoute.Name)
-				} else if exposerSecretId != id {
-					return fmt.Errorf("exposer secret %s/%s id missmatch: expected %q, got %q", exposerRoute.Namespace, exposerRoute.Name, id, exposerSecretId)
+				} else if exposerSecretID != id {
+					return fmt.Errorf("exposer secret %s/%s id missmatch: expected %q, got %q", exposerRoute.Namespace, exposerRoute.Name, id, exposerSecretID)
 				}
 
 				/*
@@ -867,7 +866,7 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 						Name:            tmpName,
 						OwnerReferences: []metav1.OwnerReference{ownerRefToExposerRoute},
 						Annotations: map[string]string{
-							api.AcmeExposerId:  id,
+							api.AcmeExposerID:  id,
 							api.AcmeExposerKey: key,
 						},
 						Labels: map[string]string{
@@ -966,7 +965,7 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 				}
 
 				// Check the id to avoid collisions
-				exposerRSId, ok := exposerRS.Annotations[api.AcmeExposerId]
+				exposerRSId, ok := exposerRS.Annotations[api.AcmeExposerID]
 				if !ok {
 					return fmt.Errorf("exposer RS %s/%s misses exposer id", exposerRoute.Namespace, exposerRoute.Name)
 				} else if exposerRSId != id {
@@ -981,7 +980,7 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 						Name:            tmpName,
 						OwnerReferences: []metav1.OwnerReference{ownerRefToExposerRoute},
 						Annotations: map[string]string{
-							api.AcmeExposerId:  id,
+							api.AcmeExposerID:  id,
 							api.AcmeExposerKey: key,
 						},
 						Labels: map[string]string{
@@ -1021,11 +1020,11 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 				}
 
 				// Check the id to avoid collisions
-				exposerServiceId, ok := exposerService.Annotations[api.AcmeExposerId]
+				exposerServiceID, ok := exposerService.Annotations[api.AcmeExposerID]
 				if !ok {
 					return fmt.Errorf("exposer service %s/%s misses exposer id", exposerRoute.Namespace, exposerRoute.Name)
-				} else if exposerServiceId != id {
-					return fmt.Errorf("exposer service %s/%s id missmatch: expected %q, got %q", exposerRoute.Namespace, exposerRoute.Name, id, exposerServiceId)
+				} else if exposerServiceID != id {
+					return fmt.Errorf("exposer service %s/%s id missmatch: expected %q, got %q", exposerRoute.Namespace, exposerRoute.Name, id, exposerServiceID)
 				}
 
 				// TODO: id admitted=false we should stop trying and report event
@@ -1109,12 +1108,12 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 		// Send CSR
 		// FIXME: Unfortunately golang also waits in this method for the cert creation
 		//  although that should be asynchronous. Requires fixing golang lib. (The helpers used are private.)
-		der, certUrl, err := acmeClient.CreateOrderCert(ctx, order.FinalizeURL, csr, true)
+		der, certURL, err := acmeClient.CreateOrderCert(ctx, order.FinalizeURL, csr, true)
 		if err != nil {
 			return fmt.Errorf("can't create cert order: %w", err)
 		}
 
-		klog.V(4).Infof("Route %q: Order %q: Certificate available at %q", key, order.URI, certUrl)
+		klog.V(4).Infof("Route %q: Order %q: Certificate available at %q", key, order.URI, certURL)
 
 		certPemData, err := cert.NewCertificateFromDER(der, privateKey)
 		if err != nil {
@@ -1123,7 +1122,7 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 
 		route := routeReadOnly.DeepCopy()
 
-		// unfortunatly golang acmeClient.CreateOrderCert waits internally for transitioning state
+		// unfortunately golang acmeClient.CreateOrderCert waits internally for transitioning state
 		// to valid and we need to reflect it in our state machine because we don't get back
 		// into the provisioning phase again after the certs are updated and valid.
 		status.ProvisioningStatus.OrderStatus = acme.StatusValid
@@ -1262,7 +1261,7 @@ func (rc *RouteController) syncRouteToSecret(ctx context.Context, key string) er
 	secret.Type = corev1.SecretTypeTLS
 
 	trueVal := true
-	secret.ObjectMeta.OwnerReferences = []metav1.OwnerReference{
+	secret.OwnerReferences = []metav1.OwnerReference{
 		{
 			APIVersion: controllerKind.GroupVersion().String(),
 			Kind:       controllerKind.Kind,
@@ -1524,7 +1523,7 @@ func filterOutAnnotations(annotations map[string]string) {
 	// don't copy haproxy.router.openshift.io/ip_whitelist so http-01 validation works
 	delete(annotations, "haproxy.router.openshift.io/ip_whitelist")
 
-	regexString, ok := annotations[api.AcmeExposerHttpFilterOutAnnotationsAnnotation]
+	regexString, ok := annotations[api.AcmeExposerHTTPFilterOutAnnotationsAnnotation]
 	if !ok || len(regexString) == 0 {
 		return
 	}
@@ -1547,7 +1546,7 @@ func filterOutLabels(labels map[string]string, annotations map[string]string) {
 		return
 	}
 
-	regexString, ok := annotations[api.AcmeExposerHttpFilterOutLabelsAnnotation]
+	regexString, ok := annotations[api.AcmeExposerHTTPFilterOutLabelsAnnotation]
 	if !ok || len(regexString) == 0 {
 		return
 	}

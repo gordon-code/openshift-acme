@@ -1,3 +1,5 @@
+// Package kube provides a kubernetes.Interface-backed informer factory
+// scoped to one or more namespaces.
 package kube
 
 import (

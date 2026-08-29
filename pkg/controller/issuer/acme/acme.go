@@ -1,3 +1,5 @@
+// Package acme implements the ACME CertIssuer that drives certificate
+// ordering and account management via golang.org/x/crypto/acme.
 package acme
 
 import (

@@ -17,8 +17,8 @@ import (
 
 func init() {
 	klog.InitFlags(nil)
-	flag.Set("logtostderr", "true")
-	flag.Set("v", "9")
+	_ = flag.Set("logtostderr", "true")
+	_ = flag.Set("v", "9")
 }
 
 func TestNewServer(t *testing.T) {

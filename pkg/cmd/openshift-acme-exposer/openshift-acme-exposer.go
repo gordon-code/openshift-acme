@@ -1,4 +1,6 @@
-package openshift_acme
+// Package openshiftacmeexposer implements the openshift-acme-exposer command,
+// which serves ACME HTTP-01 challenge responses.
+package openshiftacmeexposer
 
 import (
 	"context"
@@ -155,12 +157,12 @@ func (o *Options) Run(cmd *cobra.Command, out io.Writer) error {
 		<-ctx.Done()
 
 		// Second SIGINT results in exit(1) so it can be forcefully terminated that way for now
+		//nolint:contextcheck // ctx is already Done() here; shutdown intentionally uses a fresh context
 		err := server.Shutdown(context.TODO())
 		if err != nil {
 			errCh <- err
 			return
 		}
-		return
 	}()
 
 	wg.Wait()

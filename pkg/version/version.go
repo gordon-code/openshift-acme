@@ -1,3 +1,5 @@
+// Package version exposes build-time version information (git commit, tag,
+// and a Prometheus build_info metric) for the openshift-acme binaries.
 package version
 
 import (
