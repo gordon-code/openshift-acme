@@ -1,2 +1,5 @@
 /openshift-acme-controller
 /openshift-acme-exposer
+
+# Local, gitignored cross-session project memory (not part of the public fork).
+.dev/
