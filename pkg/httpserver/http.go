@@ -30,7 +30,9 @@ func NewServer(listenAddr string, uriToResponse map[string]string) *Server {
 		uriToResponse: uriToResponse,
 
 		server: http.Server{
-			Addr: listenAddr,
+			Addr:              listenAddr,
+			ReadHeaderTimeout: 5 * time.Second,
+			IdleTimeout:       60 * time.Second,
 		},
 	}
 }

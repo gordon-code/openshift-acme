@@ -61,7 +61,7 @@ func TestNewServer(t *testing.T) {
 			}
 
 			if !reflect.DeepEqual(tc.server.uriToResponse, s.uriToResponse) {
-				t.Errorf(cmp.Diff(tc.server.uriToResponse, s.uriToResponse))
+				t.Errorf("%s", cmp.Diff(tc.server.uriToResponse, s.uriToResponse))
 			}
 		})
 	}

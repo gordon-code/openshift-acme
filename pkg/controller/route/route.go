@@ -590,7 +590,7 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 		status.ProvisioningStatus.OrderStatus = ""
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), AcmeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, AcmeTimeout)
 	defer cancel()
 
 	certIssuer, certIssuerSecret, err := controllerutils.IssuerForObject(routeReadOnly.ObjectMeta, rc.controllerNamespace, rc.kubeInformersForNamespaces)
