@@ -8,6 +8,7 @@ GO_TEST_PACKAGES := ./cmd/... ./pkg/...
 CONTAINER_ENGINE ?= docker
 IMAGE_REGISTRY ?= ghcr.io/gordon-code
 IMAGE_TAG ?= latest
+PLATFORM ?= linux/amd64
 
 GOLANGCI_LINT ?= go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1
 
@@ -36,11 +37,11 @@ verify: vet lint verify-deploy-consistency
 
 .PHONY: image-controller
 image-controller:
-	$(CONTAINER_ENGINE) build -f images/openshift-acme-controller/Dockerfile -t $(IMAGE_REGISTRY)/openshift-acme-controller:$(IMAGE_TAG) .
+	$(CONTAINER_ENGINE) build --platform=$(PLATFORM) -f images/openshift-acme-controller/Dockerfile -t $(IMAGE_REGISTRY)/openshift-acme-controller:$(IMAGE_TAG) .
 
 .PHONY: image-exposer
 image-exposer:
-	$(CONTAINER_ENGINE) build -f images/openshift-acme-exposer/Dockerfile -t $(IMAGE_REGISTRY)/openshift-acme-exposer:$(IMAGE_TAG) .
+	$(CONTAINER_ENGINE) build --platform=$(PLATFORM) -f images/openshift-acme-exposer/Dockerfile -t $(IMAGE_REGISTRY)/openshift-acme-exposer:$(IMAGE_TAG) .
 
 .PHONY: images
 images: image-controller image-exposer
