@@ -28,7 +28,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	"github.com/tnozicka/openshift-acme/pkg/api"
 	"github.com/tnozicka/openshift-acme/pkg/helpers"
@@ -89,17 +89,23 @@ func NewAccountController(
 		klog.V(4).Infof("Setting up kube informers for namespace %q", namespace)
 		informers := kubeInformersForNamespaces.InformersFor(namespace)
 
-		informers.Core().V1().ConfigMaps().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		_, err := informers.Core().V1().ConfigMaps().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 			AddFunc:    ac.addConfigMap,
 			UpdateFunc: ac.updateConfigMap,
 			DeleteFunc: ac.deleteConfigMap,
 		})
+		if err != nil {
+			utilruntime.HandleError(fmt.Errorf("can't add ConfigMap event handler: %w", err))
+		}
 		ac.cachesToSync = append(ac.cachesToSync, informers.Core().V1().ConfigMaps().Informer().HasSynced)
 
-		informers.Core().V1().Secrets().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		_, err = informers.Core().V1().Secrets().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 			// Controller is only provisioning new secret if it is missing so it only cares to reconcile deletes.
 			DeleteFunc: ac.deleteSecret,
 		})
+		if err != nil {
+			utilruntime.HandleError(fmt.Errorf("can't add Secret event handler: %w", err))
+		}
 		ac.cachesToSync = append(ac.cachesToSync, informers.Core().V1().Secrets().Informer().HasSynced)
 	}
 
@@ -368,7 +374,7 @@ func (ac *AccountController) sync(ctx context.Context, key string) error {
 				corev1.TLSPrivateKeyKey: keyPem,
 			},
 		}
-		secret, err = ac.kubeClient.CoreV1().Secrets(cmReadOnly.Namespace).Create(secret)
+		secret, err = ac.kubeClient.CoreV1().Secrets(cmReadOnly.Namespace).Create(ctx, secret, metav1.CreateOptions{})
 		if err != nil {
 			return err
 		}
@@ -430,7 +436,7 @@ func (ac *AccountController) sync(ctx context.Context, key string) error {
 		return nil
 	}
 
-	_, err = ac.kubeClient.CoreV1().ConfigMaps(cmReadOnly.Namespace).Update(cm)
+	_, err = ac.kubeClient.CoreV1().ConfigMaps(cmReadOnly.Namespace).Update(ctx, cm, metav1.UpdateOptions{})
 	if err != nil {
 		return err
 	}
