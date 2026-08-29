@@ -965,11 +965,11 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 				}
 
 				// Check the id to avoid collisions
-				exposerRSId, ok := exposerRS.Annotations[api.AcmeExposerID]
+				exposerRSID, ok := exposerRS.Annotations[api.AcmeExposerID]
 				if !ok {
 					return fmt.Errorf("exposer RS %s/%s misses exposer id", exposerRoute.Namespace, exposerRoute.Name)
-				} else if exposerRSId != id {
-					return fmt.Errorf("exposer RS %s/%s id missmatch: expected %q, got %q", exposerRoute.Namespace, exposerRoute.Name, id, exposerRSId)
+				} else if exposerRSID != id {
+					return fmt.Errorf("exposer RS %s/%s id missmatch: expected %q, got %q", exposerRoute.Namespace, exposerRoute.Name, id, exposerRSID)
 				}
 
 				/*

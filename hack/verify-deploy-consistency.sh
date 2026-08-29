@@ -130,25 +130,32 @@ $(diff <(printf '%s\n' "${mnt_prev}") <(printf '%s\n' "${mnt}") || true)"
 done
 
 # --- (b) leases RBAC present in each mode's correct file ---
-declare -A leases_file=(
-	[cluster-wide]="deploy/cluster-wide/clusterrole.yaml"
-	[single-namespace]="deploy/single-namespace/role.yaml"
-	[specific-namespaces]="deploy/specific-namespaces/role-leaderelection.yaml"
-)
+# Bash-3.2-compatible replacement for an associative array: a case statement
+# keyed on mode name (declare -A requires Bash 4+, unavailable in macOS's
+# stock /bin/bash).
+leases_file_for_mode() {
+	case "$1" in
+		cluster-wide) printf '%s\n' "deploy/cluster-wide/clusterrole.yaml" ;;
+		single-namespace) printf '%s\n' "deploy/single-namespace/role.yaml" ;;
+		specific-namespaces) printf '%s\n' "deploy/specific-namespaces/role-leaderelection.yaml" ;;
+	esac
+}
 for mode in ${modes}; do
-	f=${leases_file[${mode}]}
+	f=$(leases_file_for_mode "${mode}")
 	[ -f "${f}" ] || fail "${f} does not exist (expected: leases RBAC for ${mode}, added in Task 5)"
 	grep -qE '^[ ]*-[ ]*leases[ ]*$' "${f}" || fail "no 'leases' resource found in ${f} (expected: added in Task 5)"
 done
 
 # --- (c) events RBAC verbs granted in every mode ---
-declare -A events_file=(
-	[cluster-wide]="deploy/cluster-wide/clusterrole.yaml"
-	[single-namespace]="deploy/single-namespace/role.yaml"
-	[specific-namespaces]="deploy/specific-namespaces/role.yaml"
-)
+events_file_for_mode() {
+	case "$1" in
+		cluster-wide) printf '%s\n' "deploy/cluster-wide/clusterrole.yaml" ;;
+		single-namespace) printf '%s\n' "deploy/single-namespace/role.yaml" ;;
+		specific-namespaces) printf '%s\n' "deploy/specific-namespaces/role.yaml" ;;
+	esac
+}
 for mode in ${modes}; do
-	f=${events_file[${mode}]}
+	f=$(events_file_for_mode "${mode}")
 	[ -f "${f}" ] || fail "${f} does not exist"
 	grep -qE '^[ ]*-[ ]*events[ ]*$' "${f}" || fail "no 'events' resource found in ${f}"
 done
