@@ -1,6 +1,7 @@
 package util
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base32"
 	"fmt"
@@ -8,8 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/onsi/ginkgo"
-	"github.com/onsi/ginkgo/reporters"
+	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -81,7 +81,8 @@ func InitTest() {
 			var gracePeriod int64 = 0
 			var propagation = metav1.DeletePropagationForeground
 			err := f.RouteClientset().RouteV1().Routes(ns.Name).DeleteCollection(
-				&metav1.DeleteOptions{
+				context.TODO(),
+				metav1.DeleteOptions{
 					GracePeriodSeconds: &gracePeriod,
 					PropagationPolicy:  &propagation,
 				}, metav1.ListOptions{
@@ -99,18 +100,10 @@ func InitTest() {
 
 	framework.Logf("E2E_DOMAIN is %q", GetBaseDomain())
 	framework.Logf("E2E_FIXED_NAMESPACE is %q", os.Getenv("E2E_FIXED_NAMESPACE"))
-	framework.Logf("E2E_JUNITFILE is %q", os.Getenv("E2E_JUNITFILE"))
+	framework.Logf("E2E_JUNIT is %q", os.Getenv("E2E_JUNIT"))
 }
 
 func ExecuteTest(t *testing.T, suite string) {
 	gomega.RegisterFailHandler(ginkgo.Fail)
-
-	junitFile := os.Getenv("E2E_JUNITFILE")
-	if len(junitFile) > 0 {
-		junitReporter := reporters.NewJUnitReporter(junitFile)
-		ginkgo.RunSpecsWithDefaultAndCustomReporters(t, suite, []ginkgo.Reporter{junitReporter})
-	} else {
-		ginkgo.RunSpecs(t, suite)
-	}
-
+	ginkgo.RunSpecs(t, suite)
 }

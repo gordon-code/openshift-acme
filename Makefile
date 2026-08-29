@@ -26,7 +26,7 @@ vet:
 
 .PHONY: lint
 lint:
-	$(GOLANGCI_LINT) run
+	$(GOLANGCI_LINT) run ./cmd/... ./pkg/...
 
 .PHONY: verify-deploy-consistency
 verify-deploy-consistency:
@@ -49,11 +49,11 @@ images: image-controller image-exposer
 test-e2e: export E2E_DOMAIN ?=$(shell oc get ingresses.config.openshift.io cluster --template='{{.spec.domain}}')
 test-e2e: export E2E_CONTROLLER_NAMESPACE ?=acme-controller
 test-e2e: export E2E_FIXED_NAMESPACE ?=
-test-e2e: export E2E_ARGS :=-args -ginkgo.progress -ginkgo.v
+test-e2e: export E2E_ARGS :=-args -ginkgo.v
 test-e2e: export E2E_JUNIT ?=
 .PHONY: test-e2e
 test-e2e:
-	go test -v ./test/e2e/... $(E2E_ARGS)
+	go test -v ./test/e2e/... $(E2E_ARGS) -ginkgo.junit-report=$(E2E_JUNIT)
 
 .PHONY: ci-test-e2e-cluster-wide
 ci-test-e2e-cluster-wide:

@@ -77,13 +77,13 @@ func generateCertificate(hosts []string, notBefore, notAfter time.Time) (*cert.C
 func WaitForRouteCondition(ctx context.Context, c routev1clientset.RouteInterface, namespace string, name string, conditions ...watchtools.ConditionFunc) (*watch.Event, error) {
 	fieldSelector := fields.OneTermEqualSelector("metadata.name", name).String()
 	lw := &cache.ListWatch{
-		ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+		ListWithContextFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
 			options.FieldSelector = fieldSelector
-			return c.List(options)
+			return c.List(ctx, options)
 		},
-		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+		WatchFuncWithContext: func(ctx context.Context, options metav1.ListOptions) (watch.Interface, error) {
 			options.FieldSelector = fieldSelector
-			return c.Watch(options)
+			return c.Watch(ctx, options)
 		},
 	}
 
@@ -107,13 +107,13 @@ func WaitForRouteCondition(ctx context.Context, c routev1clientset.RouteInterfac
 func WaitForSecretCondition(ctx context.Context, c corev1clientset.SecretInterface, namespace string, name string, conditions ...watchtools.ConditionFunc) (*watch.Event, error) {
 	fieldSelector := fields.OneTermEqualSelector("metadata.name", name).String()
 	lw := &cache.ListWatch{
-		ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+		ListWithContextFunc: func(ctx context.Context, options metav1.ListOptions) (runtime.Object, error) {
 			options.FieldSelector = fieldSelector
-			return c.List(options)
+			return c.List(ctx, options)
 		},
-		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+		WatchFuncWithContext: func(ctx context.Context, options metav1.ListOptions) (watch.Interface, error) {
 			options.FieldSelector = fieldSelector
-			return c.Watch(options)
+			return c.Watch(ctx, options)
 		},
 	}
 

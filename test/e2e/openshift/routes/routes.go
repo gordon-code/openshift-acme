@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	g "github.com/onsi/ginkgo"
+	g "github.com/onsi/ginkgo/v2"
 	o "github.com/onsi/gomega"
 	routev1 "github.com/openshift/api/route/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -36,7 +36,7 @@ func validateSyncedSecret(f *framework.Framework, route *routev1.Route) {
 
 	g.By("Validating the certificate is synced to a Secret")
 
-	secret, err := f.KubeClientSet().CoreV1().Secrets(route.Namespace).Get(route.Name, metav1.GetOptions{})
+	secret, err := f.KubeClientSet().CoreV1().Secrets(route.Namespace).Get(context.TODO(), route.Name, metav1.GetOptions{})
 	if route.Spec.TLS == nil {
 		o.Expect(apierrors.IsNotFound(err)).To(o.BeTrue())
 		return
@@ -66,7 +66,7 @@ func validateTemporaryObjectsAreDeleted(f *framework.Framework, route *routev1.R
 	// TODO: We should wait properly.
 	time.Sleep(5 * time.Second)
 
-	tmpRoutes, err := f.RouteClientset().RouteV1().Routes(route.Namespace).List(metav1.ListOptions{
+	tmpRoutes, err := f.RouteClientset().RouteV1().Routes(route.Namespace).List(context.TODO(), metav1.ListOptions{
 		LabelSelector: labels.SelectorFromValidatedSet(labels.Set{
 			api.ExposerForLabelName: string(route.UID),
 		}).String(),
@@ -76,7 +76,7 @@ func validateTemporaryObjectsAreDeleted(f *framework.Framework, route *routev1.R
 		o.Expect(tmpRoute.DeletionTimestamp).NotTo(o.BeNil())
 	}
 
-	tmpServices, err := f.KubeClientSet().CoreV1().Services(route.Namespace).List(metav1.ListOptions{
+	tmpServices, err := f.KubeClientSet().CoreV1().Services(route.Namespace).List(context.TODO(), metav1.ListOptions{
 		LabelSelector: labels.SelectorFromValidatedSet(labels.Set{
 			api.ExposerForLabelName: string(route.UID),
 		}).String(),
@@ -86,7 +86,7 @@ func validateTemporaryObjectsAreDeleted(f *framework.Framework, route *routev1.R
 		o.Expect(tmpService.DeletionTimestamp).NotTo(o.BeNil())
 	}
 
-	tmpReplicaSets, err := f.KubeClientSet().AppsV1().ReplicaSets(route.Namespace).List(metav1.ListOptions{
+	tmpReplicaSets, err := f.KubeClientSet().AppsV1().ReplicaSets(route.Namespace).List(context.TODO(), metav1.ListOptions{
 		LabelSelector: labels.SelectorFromValidatedSet(labels.Set{
 			api.ExposerForLabelName: string(route.UID),
 		}).String(),
@@ -105,7 +105,7 @@ var _ = g.Describe("Routes", func() {
 		namespace := f.Namespace()
 
 		// Create a limit range so we know creating Pods work in such environment
-		_, err := f.KubeAdminClientSet().CoreV1().LimitRanges(namespace).Create(&corev1.LimitRange{
+		_, err := f.KubeAdminClientSet().CoreV1().LimitRanges(namespace).Create(context.TODO(), &corev1.LimitRange{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "default",
 			},
@@ -120,7 +120,7 @@ var _ = g.Describe("Routes", func() {
 					},
 				},
 			},
-		})
+		}, metav1.CreateOptions{})
 		o.Expect(err).NotTo(o.HaveOccurred())
 
 		g.By("creating new Route without TLS")
@@ -140,7 +140,7 @@ var _ = g.Describe("Routes", func() {
 				},
 			},
 		}
-		route, err = f.RouteClientset().RouteV1().Routes(namespace).Create(route)
+		route, err = f.RouteClientset().RouteV1().Routes(namespace).Create(context.TODO(), route, metav1.CreateOptions{})
 		o.Expect(err).NotTo(o.HaveOccurred())
 
 		g.By("waiting for Route to be admitted by the router")
@@ -192,7 +192,7 @@ var _ = g.Describe("Routes", func() {
 		g.By("deleting the initial certificate and waiting for new one to be provisioned")
 		routeCopy := route.DeepCopy()
 		routeCopy.Spec.TLS = nil
-		route, err = f.RouteClientset().RouteV1().Routes(namespace).Patch(route.Name, types.StrategicMergePatchType, []byte(`{"spec":{"tls":{"certificate":"","key":""}}}`))
+		route, err = f.RouteClientset().RouteV1().Routes(namespace).Patch(context.TODO(), route.Name, types.StrategicMergePatchType, []byte(`{"spec":{"tls":{"certificate":"","key":""}}}`), metav1.PatchOptions{})
 		o.Expect(err).NotTo(o.HaveOccurred())
 		o.Expect(route.Spec.TLS).NotTo(o.BeNil())
 		o.Expect(route.Spec.TLS.Certificate).To(o.BeEmpty())
@@ -229,7 +229,7 @@ var _ = g.Describe("Routes", func() {
 		validateTemporaryObjectsAreDeleted(f, route)
 
 		g.By("updating the synced Secret and seeing it reconciled")
-		secret, err := f.KubeClientSet().CoreV1().Secrets(route.Namespace).Patch(route.Name, types.StrategicMergePatchType, []byte(`{"data":{"tls.key":"", "tls.crt":""}}`))
+		secret, err := f.KubeClientSet().CoreV1().Secrets(route.Namespace).Patch(context.TODO(), route.Name, types.StrategicMergePatchType, []byte(`{"data":{"tls.key":"", "tls.crt":""}}`), metav1.PatchOptions{})
 		o.Expect(err).NotTo(o.HaveOccurred())
 
 		{
@@ -251,7 +251,7 @@ var _ = g.Describe("Routes", func() {
 		g.By("deleting the synced Secret and seeing it recreated")
 		foregroundDeletion := metav1.DeletePropagationForeground
 		gracePeriod := int64(0)
-		err = f.KubeClientSet().CoreV1().Secrets(route.Namespace).Delete(route.Name, &metav1.DeleteOptions{
+		err = f.KubeClientSet().CoreV1().Secrets(route.Namespace).Delete(context.TODO(), route.Name, metav1.DeleteOptions{
 			PropagationPolicy:  &foregroundDeletion,
 			GracePeriodSeconds: &gracePeriod,
 		})
@@ -297,7 +297,7 @@ var _ = g.Describe("Routes", func() {
 				},
 			},
 		}
-		route, err = f.RouteClientset().RouteV1().Routes(namespace).Create(route)
+		route, err = f.RouteClientset().RouteV1().Routes(namespace).Create(context.TODO(), route, metav1.CreateOptions{})
 		o.Expect(err).NotTo(o.HaveOccurred())
 
 		g.By("waiting for Route to be admitted by the router")
@@ -385,7 +385,7 @@ var _ = g.Describe("Routes", func() {
 				},
 			},
 		}
-		route, err = f.RouteClientset().RouteV1().Routes(namespace).Create(route)
+		route, err = f.RouteClientset().RouteV1().Routes(namespace).Create(context.TODO(), route, metav1.CreateOptions{})
 		o.Expect(err).NotTo(o.HaveOccurred())
 
 		g.By("waiting for Route to be admitted by the router")
