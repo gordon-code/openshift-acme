@@ -61,7 +61,7 @@ oc create rolebinding openshift-acme --role=openshift-acme --serviceaccount="$( 
 ### Specific namespaces
 This deployment will provide certificate management for the namespace it's deployed to and explicitly specified namespaces. You have to make sure to give the SA correct permissions but you don't have to be cluster-admin. It works fine with regular user privileges. This is the recommended mode (see above) and the only one live-verified on OpenShift 4.22.
 
-To set up more namespace the deployment needs extra `--namespace=test` flag and you need to give the openshift-acme serviceaccount appropriate privileges for the extra namespace, like in the example bellow for the extra namespace `test`.
+By default the shipped `deployment.yaml` only watches its own namespace (via `--namespace=$(CURRENT_NAMESPACE)`). To watch more namespaces, edit the deployment to add an extra `--namespace=test` flag per additional namespace, and give the openshift-acme serviceaccount appropriate privileges for each extra namespace, like in the example bellow for the extra namespace `test`.
 
 **RBAC note:** the `Role` grants full CRUD on `secrets` and `configmaps`, scoped per-namespace to only the namespaces you bind it in — see [Least-privilege framing](#least-privilege-framing) below.
 
@@ -72,6 +72,9 @@ Leader election also needs its own `Role` (`openshift-acme-leaderelection`, gran
 If you have this repository checked out, deploy it like (example: controller running in `openshift-acme`, additionally watching `test`):
 
 ```bash
+# The shipped deployment.yaml only watches its own namespace by default (--namespace=$(CURRENT_NAMESPACE)).
+# To additionally watch `test`, edit deploy/specific-namespaces/deployment.yaml first and add an
+# extra --namespace=test arg (alongside the existing one) for each namespace you want to watch.
 oc apply -fdeploy/specific-namespaces/{role,role-leaderelection,serviceaccount,issuer-letsencrypt-live,deployment}.yaml
 
 # Bind the workload role in the controller's OWN namespace (always required, even with no extra --namespace flags).
@@ -87,10 +90,12 @@ oc create rolebinding openshift-acme --role=openshift-acme --serviceaccount="$( 
 If you want to deploy it directly from GitHub use:
 
 ```bash
+# Applied straight from GitHub, the controller watches only its own namespace.
+# To watch additional namespaces, use the checked-out path above so you can edit
+# deployment.yaml to add extra --namespace flags before applying.
 oc apply -fhttps://raw.githubusercontent.com/gordon-code/openshift-acme/main/deploy/specific-namespaces/{role,role-leaderelection,serviceaccount,issuer-letsencrypt-live,deployment}.yaml
 oc create rolebinding openshift-acme --role=openshift-acme --serviceaccount="$( oc project -q ):openshift-acme" -n "$( oc project -q )"
 oc create rolebinding openshift-acme-leaderelection --role=openshift-acme-leaderelection --serviceaccount="$( oc project -q ):openshift-acme" -n "$( oc project -q )"
-oc create rolebinding openshift-acme --role=openshift-acme --serviceaccount="$( oc project -q ):openshift-acme" -n "test"
 ```
 
 ## Least-privilege framing

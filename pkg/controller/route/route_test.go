@@ -1,10 +1,19 @@
 package route
 
 import (
+	"bytes"
+	cryptorand "crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"flag"
 	"fmt"
+	"math/big"
+	"math/rand"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -17,6 +26,10 @@ import (
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/klog/v2"
+
+	routev1 "github.com/openshift/api/route/v1"
+
+	"github.com/tnozicka/openshift-acme/pkg/cert"
 )
 
 func init() {
@@ -371,5 +384,220 @@ func TestFilterOutLabels(t *testing.T) {
 				t.Errorf("expected labels differ: %s", cmp.Diff(tc.expectedLabels, tc.labels))
 			}
 		})
+	}
+}
+
+func generateTestCertificate(t *testing.T, hosts []string, notBefore, notAfter time.Time) *cert.CertPemData {
+	t.Helper()
+
+	key, err := rsa.GenerateKey(cryptorand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serialNumber, err := cryptorand.Int(cryptorand.Reader, serialNumberLimit)
+	if err != nil {
+		t.Fatalf("failed to generate serial number: %v", err)
+	}
+
+	template := x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			Organization: []string{"openshift-acme"},
+		},
+		NotBefore: notBefore,
+		NotAfter:  notAfter,
+
+		DNSNames: hosts,
+
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+
+	derBytes, err := x509.CreateCertificate(cryptorand.Reader, &template, &template, key.Public(), key)
+	if err != nil {
+		t.Fatalf("failed to create certificate: %v", err)
+	}
+
+	certBuffer := &bytes.Buffer{}
+	if err := pem.Encode(certBuffer, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
+		t.Fatalf("failed to encode certificate: %v", err)
+	}
+
+	return &cert.CertPemData{
+		Crt: certBuffer.Bytes(),
+		Key: pem.EncodeToMemory(&pem.Block{
+			Type:  "RSA PRIVATE KEY",
+			Bytes: x509.MarshalPKCS1PrivateKey(key),
+		}),
+	}
+}
+
+func TestNeedsCertKey(t *testing.T) {
+	// Use a fixed, zero-nanosecond timestamp: x509 certs round-trip NotBefore/
+	// NotAfter at 1-second precision, so sub-second components here would
+	// desync the in-memory "now" from the parsed certificate's timestamps.
+	now := time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)
+	const host = "example.com"
+
+	healthyCert := generateTestCertificate(t, []string{host}, now.Add(-20*24*time.Hour), now.Add(80*24*time.Hour))
+	renewalCert := generateTestCertificate(t, []string{host}, now.Add(-70*24*time.Hour), now.Add(30*24*time.Hour))
+	proactiveCert := generateTestCertificate(t, []string{host}, now.Add(-60*24*time.Hour), now.Add(40*24*time.Hour))
+	expiredCert := generateTestCertificate(t, []string{host}, now.Add(-1000*24*time.Hour), now.Add(-1*24*time.Hour))
+	mismatchedHostCert := generateTestCertificate(t, []string{"other.example.com"}, now.Add(-1*time.Hour), now.Add(1000*time.Hour))
+
+	// The proactive-renewal window (lifetime/3 < remains <= lifetime/2) is a
+	// coin flip seeded by rand.NewSource(t.UnixNano()). Rather than hardcode a
+	// magic timestamp that happens to land on one side, compute the expected
+	// outcome using the exact same seed/formula used by needsCertKey. This
+	// still catches regressions in needsCertKey's own comparison/arithmetic,
+	// since needsCertKey computes n independently at call time.
+	s := rand.NewSource(now.UnixNano())
+	r := rand.New(s)
+	n := r.NormFloat64()*RenewalStandardDeviation + RenewalMean
+	expectedProactiveReason := ""
+	if n < 0 {
+		expectedProactiveReason = "Proactive renewal"
+	}
+
+	tt := []struct {
+		name           string
+		route          *routev1.Route
+		expectedReason string
+		expectedErr    error
+	}{
+		{
+			name:           "missing CertKey - nil TLS",
+			route:          &routev1.Route{Spec: routev1.RouteSpec{Host: host}},
+			expectedReason: "Route is missing CertKey",
+		},
+		{
+			name: "missing CertKey - empty cert and key",
+			route: &routev1.Route{
+				Spec: routev1.RouteSpec{Host: host, TLS: &routev1.TLSConfig{}},
+			},
+			expectedReason: "Route is missing CertKey",
+		},
+		{
+			name: "missing CertKey - key present but certificate empty",
+			route: &routev1.Route{
+				Spec: routev1.RouteSpec{Host: host, TLS: &routev1.TLSConfig{Key: "somekey"}},
+			},
+			expectedReason: "Route is missing CertKey",
+		},
+		{
+			name: "hostname mismatch",
+			route: &routev1.Route{
+				Spec: routev1.RouteSpec{
+					Host: host,
+					TLS: &routev1.TLSConfig{
+						Certificate: string(mismatchedHostCert.Crt),
+						Key:         string(mismatchedHostCert.Key),
+					},
+				},
+			},
+			expectedReason: "Existing certificate doesn't match hostname",
+		},
+		{
+			name: "already expired",
+			route: &routev1.Route{
+				Spec: routev1.RouteSpec{
+					Host: host,
+					TLS: &routev1.TLSConfig{
+						Certificate: string(expiredCert.Crt),
+						Key:         string(expiredCert.Key),
+					},
+				},
+			},
+			expectedReason: "Already expired",
+		},
+		{
+			name: "in renewal period",
+			route: &routev1.Route{
+				Spec: routev1.RouteSpec{
+					Host: host,
+					TLS: &routev1.TLSConfig{
+						Certificate: string(renewalCert.Crt),
+						Key:         string(renewalCert.Key),
+					},
+				},
+			},
+			expectedReason: "In renewal period",
+		},
+		{
+			name: "proactive renewal window",
+			route: &routev1.Route{
+				Spec: routev1.RouteSpec{
+					Host: host,
+					TLS: &routev1.TLSConfig{
+						Certificate: string(proactiveCert.Crt),
+						Key:         string(proactiveCert.Key),
+					},
+				},
+			},
+			expectedReason: expectedProactiveReason,
+		},
+		{
+			name: "healthy cert - no renewal needed",
+			route: &routev1.Route{
+				Spec: routev1.RouteSpec{
+					Host: host,
+					TLS: &routev1.TLSConfig{
+						Certificate: string(healthyCert.Crt),
+						Key:         string(healthyCert.Key),
+					},
+				},
+			},
+			expectedReason: "",
+		},
+	}
+
+	for _, tc := range tt {
+		t.Run(tc.name, func(t *testing.T) {
+			reason, err := needsCertKey(now, tc.route)
+
+			if !reflect.DeepEqual(err, tc.expectedErr) {
+				t.Errorf("expected error %v, got %v", tc.expectedErr, err)
+			}
+			if reason != tc.expectedReason {
+				t.Errorf("expected reason %q, got %q", tc.expectedReason, reason)
+			}
+		})
+	}
+}
+
+func TestExposerPodSecurityContext(t *testing.T) {
+	trueVal := true
+	expected := &corev1.PodSecurityContext{
+		RunAsNonRoot: &trueVal,
+		SeccompProfile: &corev1.SeccompProfile{
+			Type: corev1.SeccompProfileTypeRuntimeDefault,
+		},
+	}
+
+	got := exposerPodSecurityContext()
+
+	if !apiequality.Semantic.DeepEqual(got, expected) {
+		t.Errorf("unexpected PodSecurityContext, diff: %s", cmp.Diff(expected, got))
+	}
+}
+
+func TestExposerContainerSecurityContext(t *testing.T) {
+	trueVal := true
+	falseVal := false
+	expected := &corev1.SecurityContext{
+		AllowPrivilegeEscalation: &falseVal,
+		ReadOnlyRootFilesystem:   &trueVal,
+		Capabilities: &corev1.Capabilities{
+			Drop: []corev1.Capability{"ALL"},
+		},
+	}
+
+	got := exposerContainerSecurityContext()
+
+	if !apiequality.Semantic.DeepEqual(got, expected) {
+		t.Errorf("unexpected SecurityContext, diff: %s", cmp.Diff(expected, got))
 	}
 }

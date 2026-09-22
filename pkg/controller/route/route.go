@@ -847,20 +847,8 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 				podSelector := &metav1.LabelSelector{
 					MatchLabels: podLabels,
 				}
-				falseVal := false
-				podSecurityContext := &corev1.PodSecurityContext{
-					RunAsNonRoot: &trueVal,
-					SeccompProfile: &corev1.SeccompProfile{
-						Type: corev1.SeccompProfileTypeRuntimeDefault,
-					},
-				}
-				containerSecurityContext := &corev1.SecurityContext{
-					AllowPrivilegeEscalation: &falseVal,
-					ReadOnlyRootFilesystem:   &trueVal,
-					Capabilities: &corev1.Capabilities{
-						Drop: []corev1.Capability{"ALL"},
-					},
-				}
+				podSecurityContext := exposerPodSecurityContext()
+				containerSecurityContext := exposerContainerSecurityContext()
 				desiredExposerRS := &appsv1.ReplicaSet{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:            tmpName,
@@ -1435,6 +1423,32 @@ func GetSyncSecretName(route *routev1.Route) (string, bool) {
 	}
 
 	return secretName, true
+}
+
+// exposerPodSecurityContext returns the Pod-level SecurityContext used by the
+// exposer ReplicaSet's pod template.
+func exposerPodSecurityContext() *corev1.PodSecurityContext {
+	trueVal := true
+	return &corev1.PodSecurityContext{
+		RunAsNonRoot: &trueVal,
+		SeccompProfile: &corev1.SeccompProfile{
+			Type: corev1.SeccompProfileTypeRuntimeDefault,
+		},
+	}
+}
+
+// exposerContainerSecurityContext returns the container-level SecurityContext
+// used by the exposer container.
+func exposerContainerSecurityContext() *corev1.SecurityContext {
+	falseVal := false
+	trueVal := true
+	return &corev1.SecurityContext{
+		AllowPrivilegeEscalation: &falseVal,
+		ReadOnlyRootFilesystem:   &trueVal,
+		Capabilities: &corev1.Capabilities{
+			Drop: []corev1.Capability{"ALL"},
+		},
+	}
 }
 
 func adjustContainerResourceRequirements(requirements *corev1.ResourceRequirements, limitRanges []*corev1.LimitRange) error {

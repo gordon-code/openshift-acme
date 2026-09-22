@@ -60,6 +60,14 @@ func TestNewServer(t *testing.T) {
 				t.Errorf("expected %q, got %q", tc.server.server.Addr, s.listeningAddr)
 			}
 
+			if s.server.ReadHeaderTimeout != 5*time.Second {
+				t.Errorf("expected ReadHeaderTimeout %s, got %s", 5*time.Second, s.server.ReadHeaderTimeout)
+			}
+
+			if s.server.IdleTimeout != 60*time.Second {
+				t.Errorf("expected IdleTimeout %s, got %s", 60*time.Second, s.server.IdleTimeout)
+			}
+
 			if !reflect.DeepEqual(tc.server.uriToResponse, s.uriToResponse) {
 				t.Errorf("%s", cmp.Diff(tc.server.uriToResponse, s.uriToResponse))
 			}

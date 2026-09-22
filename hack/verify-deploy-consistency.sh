@@ -99,17 +99,17 @@ for mode in ${modes}; do
 	[ -f "${f}" ] || fail "${f} does not exist"
 
 	sc=$(extract_key_blocks "${f}" '^[ ]*securityContext:[ ]*$')
-	[ -n "${sc}" ] || fail "no securityContext block found in ${f} (expected: shared pod/container securityContext, added in Task 5)"
+	[ -n "${sc}" ] || fail "no securityContext block found in ${f} (expected: shared pod/container securityContext)"
 
 	volumes_block=$(extract_key_blocks "${f}" '^[ ]*volumes:[ ]*$')
-	[ -n "${volumes_block}" ] || fail "no volumes: block found in ${f} (expected: writable /tmp emptyDir volume, added in Task 5)"
+	[ -n "${volumes_block}" ] || fail "no volumes: block found in ${f} (expected: writable /tmp emptyDir volume)"
 	vol=$(printf '%s\n' "${volumes_block}" | extract_item_containing 'emptyDir:')
-	[ -n "${vol}" ] || fail "no emptyDir volume item found under volumes: in ${f} (expected: writable /tmp emptyDir volume, added in Task 5)"
+	[ -n "${vol}" ] || fail "no emptyDir volume item found under volumes: in ${f} (expected: writable /tmp emptyDir volume)"
 
 	mounts_block=$(extract_key_blocks "${f}" '^[ ]*volumeMounts:[ ]*$')
-	[ -n "${mounts_block}" ] || fail "no volumeMounts: block found in ${f} (expected: /tmp mount, added in Task 5)"
+	[ -n "${mounts_block}" ] || fail "no volumeMounts: block found in ${f} (expected: /tmp mount)"
 	mnt=$(printf '%s\n' "${mounts_block}" | extract_item_containing '^[ ]*mountPath:[ ]*"?/tmp"?[ ]*$')
-	[ -n "${mnt}" ] || fail "no volumeMount item for /tmp found under volumeMounts: in ${f} (expected: /tmp mount, added in Task 5)"
+	[ -n "${mnt}" ] || fail "no volumeMount item for /tmp found under volumeMounts: in ${f} (expected: /tmp mount)"
 
 	if [ -n "${sc_prev}" ] && [ "${sc}" != "${sc_prev}" ]; then
 		fail "securityContext block differs between ${sc_prev_mode} and ${mode}:
@@ -142,8 +142,8 @@ leases_file_for_mode() {
 }
 for mode in ${modes}; do
 	f=$(leases_file_for_mode "${mode}")
-	[ -f "${f}" ] || fail "${f} does not exist (expected: leases RBAC for ${mode}, added in Task 5)"
-	grep -qE '^[ ]*-[ ]*leases[ ]*$' "${f}" || fail "no 'leases' resource found in ${f} (expected: added in Task 5)"
+	[ -f "${f}" ] || fail "${f} does not exist (expected: leases RBAC for ${mode})"
+	grep -qE '^[ ]*-[ ]*leases[ ]*$' "${f}" || fail "no 'leases' resource found in ${f}"
 done
 
 # --- (c) events RBAC verbs granted in every mode ---
