@@ -1,8 +1,9 @@
 package route
 
 import (
-	"context"
 	"bytes"
+	"context"
+	"strings"
 	cryptorand "crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -641,6 +642,23 @@ func TestSync_ContextTimeout(t *testing.T) {
 
 	rc, _, _, kubeInf, routeInf := newTestRouteController()
 
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-issuer",
+			Namespace: "default",
+		},
+		Data: map[string]string{
+			"cert-issuer.types.acme.openshift.io": `type: ACME
+secretName: letsencrypt-live
+acmeCertIssuer:
+  directoryURL: ` + ts.URL,
+		},
+	}
+	kubeInf.InformersForOrGlobal("default").Core().V1().ConfigMaps().Informer().GetIndexer().Add(cm)
+
+	key, _ := rsa.GenerateKey(cryptorand.Reader, 2048)
+	keyPem := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "letsencrypt-live",
@@ -648,6 +666,7 @@ func TestSync_ContextTimeout(t *testing.T) {
 		},
 		Data: map[string][]byte{
 			corev1.TLSCertKey: []byte(ts.URL),
+			corev1.TLSPrivateKeyKey: keyPem,
 		},
 	}
 	kubeInf.InformersForOrGlobal("default").Core().V1().Secrets().Informer().GetIndexer().Add(secret)
@@ -658,6 +677,7 @@ func TestSync_ContextTimeout(t *testing.T) {
 			Namespace: "default",
 			Annotations: map[string]string{
 				"kubernetes.io/tls-acme": "true",
+				"acme.openshift.io/cert-issuer-name": "test-issuer",
 			},
 		},
 		Spec: routev1.RouteSpec{
@@ -678,17 +698,14 @@ func TestSync_ContextTimeout(t *testing.T) {
 	}
 	routeInf.InformersForOrGlobal("default").Route().V1().Routes().Informer().GetIndexer().Add(route)
 
-	origAcmeTimeout := AcmeTimeout
-	AcmeTimeout = 100 * time.Millisecond
-	defer func() { AcmeTimeout = origAcmeTimeout }()
+	rc.acmeTimeout = 100 * time.Millisecond
 
 	err := rc.sync(context.Background(), "default/test-route")
 	
 	if err == nil {
 		t.Fatalf("Expected an error from sync due to ACME timeout, got nil")
 	}
-	
-	if err.Error() == "" {
-		t.Errorf("Expected non-empty error message")
+	if !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Errorf("Expected context deadline exceeded error, got: %v", err)
 	}
 }

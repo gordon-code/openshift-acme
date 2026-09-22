@@ -65,9 +65,6 @@ const (
 	BackoffGCInterval = 1 * time.Minute
 )
 
-var (
-	AcmeTimeout = 60 * time.Second
-)
 
 var (
 	KeyFunc = cache.DeletionHandlingMetaNamespaceKeyFunc
@@ -82,6 +79,7 @@ type RouteController struct {
 	certDefaultRSAKeyBitSize int
 	exposerImage             string
 	controllerNamespace      string
+	acmeTimeout              time.Duration
 
 	kubeClient                 kubernetes.Interface
 	kubeInformersForNamespaces kubeinformers.Interface
@@ -120,6 +118,7 @@ func NewRouteController(
 		certDefaultRSAKeyBitSize: certDefaultRSAKeyBitSize,
 		exposerImage:             exposerImage,
 		controllerNamespace:      controllerNamespace,
+		acmeTimeout:              60 * time.Second,
 
 		kubeClient:                 kubeClient,
 		kubeInformersForNamespaces: kubeInformersForNamespaces,
@@ -481,16 +480,24 @@ func (rc *RouteController) updateStatus(ctx context.Context, routeReadOnly *rout
 
 	klog.V(4).Info(spew.Sprintf("Updating status for Route %s/%s to %#v", newRoute.Namespace, newRoute.Name, status))
 
-	patchData, err := json.Marshal(map[string]interface{}{
-		"metadata": map[string]interface{}{
-			"annotations": newRoute.Annotations,
+	statusBytes, err := json.Marshal(status)
+	if err != nil {
+		return fmt.Errorf("can't marshal status for patch: %w", err)
+	}
+
+	patchPayload := []map[string]interface{}{
+		{
+			"op":    "add",
+			"path":  "/metadata/annotations/" + strings.ReplaceAll(api.AcmeStatusAnnotation, "/", "~1"),
+			"value": string(statusBytes),
 		},
-	})
+	}
+	patchData, err := json.Marshal(patchPayload)
 	if err != nil {
 		return fmt.Errorf("can't marshal patch data: %w", err)
 	}
 
-	_, err = rc.routeClient.RouteV1().Routes(newRoute.Namespace).Patch(ctx, newRoute.Name, types.MergePatchType, patchData, metav1.PatchOptions{})
+	_, err = rc.routeClient.RouteV1().Routes(newRoute.Namespace).Patch(ctx, newRoute.Name, types.JSONPatchType, patchData, metav1.PatchOptions{})
 	if err != nil {
 		return fmt.Errorf("can't update status: %w", err)
 	}
@@ -586,7 +593,7 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 		status.ProvisioningStatus.OrderStatus = ""
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, AcmeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, rc.acmeTimeout)
 	defer cancel()
 
 	certIssuer, certIssuerSecret, err := controllerutils.IssuerForObject(routeReadOnly.ObjectMeta, rc.controllerNamespace, rc.kubeInformersForNamespaces)
