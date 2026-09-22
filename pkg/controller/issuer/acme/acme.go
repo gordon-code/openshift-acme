@@ -63,7 +63,7 @@ type AccountController struct {
 
 	recorder record.EventRecorder
 
-	queue workqueue.RateLimitingInterface
+	queue workqueue.TypedRateLimitingInterface[string]
 }
 
 func NewAccountController(
@@ -80,7 +80,7 @@ func NewAccountController(
 
 		recorder: eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: ControllerName}),
 
-		queue: workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
+		queue: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
 	}
 
 	if len(kubeInformersForNamespaces.Namespaces()) < 1 {
@@ -155,7 +155,7 @@ func (ac *AccountController) processNextItem(ctx context.Context) bool {
 	}
 	defer ac.queue.Done(key)
 
-	err := ac.sync(ctx, key.(string))
+	err := ac.sync(ctx, key)
 
 	if err == nil {
 		ac.queue.Forget(key)

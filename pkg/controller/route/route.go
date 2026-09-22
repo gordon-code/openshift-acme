@@ -90,8 +90,8 @@ type RouteController struct {
 
 	recorder record.EventRecorder
 
-	queue                workqueue.RateLimitingInterface
-	routesToSecretsQueue workqueue.RateLimitingInterface
+	queue                workqueue.TypedRateLimitingInterface[string]
+	routesToSecretsQueue workqueue.TypedRateLimitingInterface[string]
 }
 
 func NewRouteController(
@@ -126,8 +126,8 @@ func NewRouteController(
 
 		recorder: eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: ControllerName}),
 
-		queue:                workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
-		routesToSecretsQueue: workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
+		queue:                workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
+		routesToSecretsQueue: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
 	}
 
 	if len(routeInformersForNamespaces.Namespaces()) < 1 {
@@ -1312,7 +1312,7 @@ func (rc *RouteController) processNextRouteItem(ctx context.Context) bool {
 	}
 	defer rc.queue.Done(key)
 
-	err := rc.sync(ctx, key.(string))
+	err := rc.sync(ctx, key)
 	if err == nil {
 		rc.queue.Forget(key)
 		return true
@@ -1331,7 +1331,7 @@ func (rc *RouteController) processNextRouteToSecretItem(ctx context.Context) boo
 	}
 	defer rc.routesToSecretsQueue.Done(key)
 
-	err := rc.syncRouteToSecret(ctx, key.(string))
+	err := rc.syncRouteToSecret(ctx, key)
 	if err == nil {
 		rc.routesToSecretsQueue.Forget(key)
 		return true

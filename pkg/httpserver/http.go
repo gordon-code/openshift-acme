@@ -133,11 +133,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) WaitForConnect(ctx context.Context, pollInterval time.Duration) error {
-	return wait.PollImmediateUntil(pollInterval, func() (done bool, err error) {
+	return wait.PollUntilContextCancel(ctx, pollInterval, true, func(ctx context.Context) (done bool, err error) {
 		_, err = net.DialTimeout("tcp", s.getListeningAddr(), 3*time.Second)
 		if err == nil {
 			return true, nil
 		}
 		return false, nil
-	}, ctx.Done())
+	})
 }
