@@ -37,6 +37,8 @@ import (
 	"github.com/tnozicka/openshift-acme/pkg/signals"
 )
 
+var newResourceLock = resourcelock.New
+
 type Options struct {
 	genericclioptions.IOStreams
 
@@ -63,7 +65,7 @@ type Options struct {
 func NewOptions(streams genericclioptions.IOStreams) *Options {
 	return &Options{
 		IOStreams:  streams,
-		Workers:    10,
+		Workers:    50,
 		Kubeconfig: "",
 
 		LeaderelectionLeaseDuration: 60 * time.Second,
@@ -275,7 +277,7 @@ func (o *Options) Run(cmd *cobra.Command, streams genericclioptions.IOStreams) e
 
 	// we use the Lease lock type since edits to Leases are less common
 	// and fewer objects in the cluster watch "all Leases".
-	lock, err := resourcelock.New(
+	lock, err := newResourceLock(
 		resourcelock.LeasesResourceLock,
 		o.ControllerNamespace,
 		"acme-controller-locks",

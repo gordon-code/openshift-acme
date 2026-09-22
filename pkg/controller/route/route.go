@@ -11,6 +11,7 @@ import (
 	"encoding/base32"
 	"fmt"
 	"math/rand"
+	"encoding/json"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -31,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	apierrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
@@ -38,7 +40,6 @@ import (
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
@@ -55,15 +56,17 @@ import (
 	routeutil "github.com/tnozicka/openshift-acme/pkg/route"
 	"github.com/tnozicka/openshift-acme/pkg/util"
 )
-
 const (
 	ControllerName           = "openshift-acme-controller"
 	ExposerFileKey           = "exposer-file"
 	RenewalStandardDeviation = 1
 	RenewalMean              = 0
-	AcmeTimeout              = 60 * time.Second
 	// BackoffGCInterval is the time that has to pass before next iteration of backoff GC is run
 	BackoffGCInterval = 1 * time.Minute
+)
+
+var (
+	AcmeTimeout = 60 * time.Second
 )
 
 var (
@@ -465,36 +468,29 @@ func (rc *RouteController) getStatus(routeReadOnly *routev1.Route) (*api.Status,
 }
 
 func (rc *RouteController) updateStatus(ctx context.Context, routeReadOnly *routev1.Route, status *api.Status) error {
-	var oldRouteReadOnly *routev1.Route
-	var err error
-	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		if oldRouteReadOnly == nil {
-			oldRouteReadOnly = routeReadOnly
-		} else {
-			oldRouteReadOnly, err = rc.routeClient.RouteV1().Routes(routeReadOnly.Namespace).Get(ctx, routeReadOnly.Name, metav1.GetOptions{})
-			if err != nil {
-				return err
-			}
-		}
+	newRoute := routeReadOnly.DeepCopy()
 
-		newRoute := oldRouteReadOnly.DeepCopy()
+	err := setStatus(&newRoute.ObjectMeta, status)
+	if err != nil {
+		return fmt.Errorf("can't set status: %w", err)
+	}
 
-		err := setStatus(&newRoute.ObjectMeta, status)
-		if err != nil {
-			return fmt.Errorf("can't set status: %w", err)
-		}
+	if reflect.DeepEqual(newRoute.Annotations, routeReadOnly.Annotations) {
+		return nil
+	}
 
-		if reflect.DeepEqual(newRoute, oldRouteReadOnly) {
-			return nil
-		}
+	klog.V(4).Info(spew.Sprintf("Updating status for Route %s/%s to %#v", newRoute.Namespace, newRoute.Name, status))
 
-		klog.V(4).Info(spew.Sprintf("Updating status for Route %s/%s to %#v", newRoute.Namespace, newRoute.Name, status))
-		// The controller is the sole owner of the status.
-		// Use Patch so we don't loose ACME information due to conflicts on the object. (e.g. on stale caches)
-
-		_, err = rc.routeClient.RouteV1().Routes(newRoute.Namespace).Update(ctx, newRoute, metav1.UpdateOptions{})
-		return err
+	patchData, err := json.Marshal(map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"annotations": newRoute.Annotations,
+		},
 	})
+	if err != nil {
+		return fmt.Errorf("can't marshal patch data: %w", err)
+	}
+
+	_, err = rc.routeClient.RouteV1().Routes(newRoute.Namespace).Patch(ctx, newRoute.Name, types.MergePatchType, patchData, metav1.PatchOptions{})
 	if err != nil {
 		return fmt.Errorf("can't update status: %w", err)
 	}

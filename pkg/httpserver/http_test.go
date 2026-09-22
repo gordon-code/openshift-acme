@@ -195,3 +195,15 @@ func TestRun(t *testing.T) {
 		})
 	}
 }
+
+func TestWaitForConnect_Cancellation(t *testing.T) {
+	s := NewServer("localhost:0", map[string]string{})
+	// Create a context that is already canceled
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	
+	err := s.WaitForConnect(ctx, 100*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected error due to canceled context, got nil")
+	}
+}

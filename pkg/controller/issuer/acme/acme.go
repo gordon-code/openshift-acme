@@ -45,6 +45,10 @@ var (
 	KeyFunc = cache.DeletionHandlingMetaNamespaceKeyFunc
 )
 
+var (
+	AcmeTimeout = 15 * time.Second
+ )
+
 var once sync.Once
 
 func acceptTerms(tosURL string) bool {
@@ -357,7 +361,7 @@ func (ac *AccountController) sync(ctx context.Context, key string) error {
 			Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
 		})
 
-		registerCtx, registerCtxCancel := context.WithTimeout(ctx, 15*time.Second)
+		registerCtx, registerCtxCancel := context.WithTimeout(ctx, AcmeTimeout)
 		defer registerCtxCancel()
 		account = &acme.Account{
 			Contact: acmeIssuer.Account.Contacts,
@@ -399,7 +403,7 @@ func (ac *AccountController) sync(ctx context.Context, key string) error {
 		// Update the acme account to reflect user changes
 		account.Contact = acmeIssuer.Account.Contacts
 
-		updateCtx, updateCtxCancel := context.WithTimeout(ctx, 15*time.Second)
+		updateCtx, updateCtxCancel := context.WithTimeout(ctx, AcmeTimeout)
 		defer updateCtxCancel()
 		account, err = client.UpdateReg(updateCtx, account)
 		if err != nil {
@@ -408,7 +412,7 @@ func (ac *AccountController) sync(ctx context.Context, key string) error {
 		ac.recorder.Event(cmReadOnly, corev1.EventTypeNormal, "AcmeAccountUpdated", "ACME account was updated to reflect data in API.")
 		klog.V(2).Infof("Updated ACME account %s/%s to: %#v", cmReadOnly.Namespace, cmReadOnly.Name, account)
 	} else if len(acmeIssuer.Account.Status.URI) == 0 {
-		getRegCtx, getRegCtxCancel := context.WithTimeout(ctx, 15*time.Second)
+		getRegCtx, getRegCtxCancel := context.WithTimeout(ctx, AcmeTimeout)
 		defer getRegCtxCancel()
 		// url argument is not needed for RFC 8555 compliant CAs
 		account, err = client.GetReg(getRegCtx, "")
