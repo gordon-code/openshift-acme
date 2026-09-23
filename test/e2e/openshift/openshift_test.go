@@ -7,10 +7,7 @@ import (
 	exutil "github.com/tnozicka/openshift-acme/test/e2e/openshift/util"
 )
 
-func init() {
-	exutil.InitTest()
-}
-
 func TestExtended(t *testing.T) {
+	exutil.InitTest(t)
 	exutil.ExecuteTest(t, "Extended")
 }

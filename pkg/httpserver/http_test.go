@@ -201,7 +201,7 @@ func TestWaitForConnect_Cancellation(t *testing.T) {
 	// Create a context that is already canceled
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	
+
 	err := s.WaitForConnect(ctx, 100*time.Millisecond)
 	if err == nil {
 		t.Fatal("expected error due to canceled context, got nil")

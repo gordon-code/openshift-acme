@@ -23,10 +23,10 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
+	coordinationv1 "k8s.io/client-go/kubernetes/typed/coordination/v1"
+	corev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/klog/v2"
-
 	routeclientset "github.com/openshift/client-go/route/clientset/versioned"
-
 	"github.com/tnozicka/openshift-acme/pkg/api"
 	"github.com/tnozicka/openshift-acme/pkg/cmd/genericclioptions"
 	cmdutil "github.com/tnozicka/openshift-acme/pkg/cmd/util"
@@ -41,6 +41,8 @@ var newResourceLock = resourcelock.New
 
 type Options struct {
 	genericclioptions.IOStreams
+
+	NewResourceLock func(lockType string, namespace string, name string, coreClient corev1.CoreV1Interface, coordinationClient coordinationv1.CoordinationV1Interface, rlc resourcelock.ResourceLockConfig) (resourcelock.Interface, error)
 
 	Annotation                  string
 	Workers                     int
@@ -64,9 +66,10 @@ type Options struct {
 
 func NewOptions(streams genericclioptions.IOStreams) *Options {
 	return &Options{
-		IOStreams:  streams,
-		Workers:    50,
-		Kubeconfig: "",
+		IOStreams:       streams,
+		NewResourceLock: resourcelock.New,
+		Workers:         50,
+		Kubeconfig:      "",
 
 		LeaderelectionLeaseDuration: 60 * time.Second,
 		LeaderelectionRenewDeadline: 35 * time.Second,
@@ -277,7 +280,7 @@ func (o *Options) Run(cmd *cobra.Command, streams genericclioptions.IOStreams) e
 
 	// we use the Lease lock type since edits to Leases are less common
 	// and fewer objects in the cluster watch "all Leases".
-	lock, err := newResourceLock(
+	lock, err := o.NewResourceLock(
 		resourcelock.LeasesResourceLock,
 		o.ControllerNamespace,
 		"acme-controller-locks",

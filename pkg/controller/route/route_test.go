@@ -3,7 +3,6 @@ package route
 import (
 	"bytes"
 	"context"
-	"strings"
 	cryptorand "crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -16,16 +15,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
 
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/kubernetes/fake"
 	routeclientset "github.com/openshift/client-go/route/clientset/versioned/fake"
 	kubeinformers "github.com/tnozicka/openshift-acme/pkg/machinery/informers/kube"
 	routeinformers "github.com/tnozicka/openshift-acme/pkg/machinery/informers/route"
+	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/api/validation"
@@ -33,6 +32,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/util/errors"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/klog/v2"
 
 	routev1 "github.com/openshift/api/route/v1"
@@ -610,13 +610,13 @@ func TestExposerContainerSecurityContext(t *testing.T) {
 	}
 }
 
-func newTestRouteController() (*RouteController, *fake.Clientset, *routeclientset.Clientset, kubeinformers.Interface, routeinformers.Interface) {
+func newTestRouteController() (*RouteController, *routeclientset.Clientset, kubeinformers.Interface, routeinformers.Interface) {
 	kubeClient := fake.NewSimpleClientset()
 	routeClient := routeclientset.NewSimpleClientset()
-	
+
 	kubeInf := kubeinformers.NewKubeInformersForNamespaces(kubeClient, []string{""})
 	routeInf := routeinformers.NewRouteInformersForNamespaces(routeClient, []string{""})
-	
+
 	rc := NewRouteController(
 		"kubernetes.io/tls-acme",
 		1*time.Second,
@@ -629,8 +629,8 @@ func newTestRouteController() (*RouteController, *fake.Clientset, *routeclientse
 		routeClient,
 		routeInf,
 	)
-	
-	return rc, kubeClient, routeClient, kubeInf, routeInf
+
+	return rc, routeClient, kubeInf, routeInf
 }
 
 func TestSync_ContextTimeout(t *testing.T) {
@@ -640,7 +640,7 @@ func TestSync_ContextTimeout(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	rc, _, _, kubeInf, routeInf := newTestRouteController()
+	rc, _, kubeInf, routeInf := newTestRouteController()
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -654,7 +654,7 @@ acmeCertIssuer:
   directoryURL: ` + ts.URL,
 		},
 	}
-	kubeInf.InformersForOrGlobal("default").Core().V1().ConfigMaps().Informer().GetIndexer().Add(cm)
+	_ = kubeInf.InformersForOrGlobal("default").Core().V1().ConfigMaps().Informer().GetIndexer().Add(cm)
 
 	key, _ := rsa.GenerateKey(cryptorand.Reader, 2048)
 	keyPem := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
@@ -665,18 +665,18 @@ acmeCertIssuer:
 			Namespace: "default",
 		},
 		Data: map[string][]byte{
-			corev1.TLSCertKey: []byte(ts.URL),
+			corev1.TLSCertKey:       []byte(ts.URL),
 			corev1.TLSPrivateKeyKey: keyPem,
 		},
 	}
-	kubeInf.InformersForOrGlobal("default").Core().V1().Secrets().Informer().GetIndexer().Add(secret)
+	_ = kubeInf.InformersForOrGlobal("default").Core().V1().Secrets().Informer().GetIndexer().Add(secret)
 
 	route := &routev1.Route{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-route",
 			Namespace: "default",
 			Annotations: map[string]string{
-				"kubernetes.io/tls-acme": "true",
+				"kubernetes.io/tls-acme":             "true",
 				"acme.openshift.io/cert-issuer-name": "test-issuer",
 			},
 		},
@@ -696,12 +696,12 @@ acmeCertIssuer:
 			},
 		},
 	}
-	routeInf.InformersForOrGlobal("default").Route().V1().Routes().Informer().GetIndexer().Add(route)
+	_ = routeInf.InformersForOrGlobal("default").Route().V1().Routes().Informer().GetIndexer().Add(route)
 
 	rc.acmeTimeout = 100 * time.Millisecond
 
 	err := rc.sync(context.Background(), "default/test-route")
-	
+
 	if err == nil {
 		t.Fatalf("Expected an error from sync due to ACME timeout, got nil")
 	}

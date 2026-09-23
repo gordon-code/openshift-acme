@@ -45,7 +45,6 @@ var (
 	KeyFunc = cache.DeletionHandlingMetaNamespaceKeyFunc
 )
 
-
 var once sync.Once
 
 func acceptTerms(tosURL string) bool {
@@ -78,8 +77,8 @@ func NewAccountController(
 
 	ac := &AccountController{
 		kubeClient:                 kubeClient,
+		kubeInformersForNamespaces: kubeInformersForNamespaces,
 		acmeTimeout:                15 * time.Second,
-
 
 		recorder: eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: ControllerName}),
 

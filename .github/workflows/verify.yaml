@@ -32,3 +32,6 @@ jobs:
         with:
           version: v2.13.1
           args: ./cmd/... ./pkg/...
+
+      - name: Verify deploy consistency
+        run: make verify-deploy-consistency

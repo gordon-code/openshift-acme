@@ -9,9 +9,9 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base32"
+	"encoding/json"
 	"fmt"
 	"math/rand"
-	"encoding/json"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -30,9 +30,9 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	apierrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
@@ -56,6 +56,7 @@ import (
 	routeutil "github.com/tnozicka/openshift-acme/pkg/route"
 	"github.com/tnozicka/openshift-acme/pkg/util"
 )
+
 const (
 	ControllerName           = "openshift-acme-controller"
 	ExposerFileKey           = "exposer-file"
@@ -64,7 +65,6 @@ const (
 	// BackoffGCInterval is the time that has to pass before next iteration of backoff GC is run
 	BackoffGCInterval = 1 * time.Minute
 )
-
 
 var (
 	KeyFunc = cache.DeletionHandlingMetaNamespaceKeyFunc
@@ -485,11 +485,11 @@ func (rc *RouteController) updateStatus(ctx context.Context, routeReadOnly *rout
 		return fmt.Errorf("can't marshal status for patch: %w", err)
 	}
 
-	patchPayload := []map[string]interface{}{
-		{
-			"op":    "add",
-			"path":  "/metadata/annotations/" + strings.ReplaceAll(api.AcmeStatusAnnotation, "/", "~1"),
-			"value": string(statusBytes),
+	patchPayload := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"annotations": map[string]interface{}{
+				api.AcmeStatusAnnotation: string(statusBytes),
+			},
 		},
 	}
 	patchData, err := json.Marshal(patchPayload)
@@ -497,7 +497,7 @@ func (rc *RouteController) updateStatus(ctx context.Context, routeReadOnly *rout
 		return fmt.Errorf("can't marshal patch data: %w", err)
 	}
 
-	_, err = rc.routeClient.RouteV1().Routes(newRoute.Namespace).Patch(ctx, newRoute.Name, types.JSONPatchType, patchData, metav1.PatchOptions{})
+	_, err = rc.routeClient.RouteV1().Routes(newRoute.Namespace).Patch(ctx, newRoute.Name, types.MergePatchType, patchData, metav1.PatchOptions{})
 	if err != nil {
 		return fmt.Errorf("can't update status: %w", err)
 	}

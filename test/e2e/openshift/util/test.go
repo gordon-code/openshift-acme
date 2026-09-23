@@ -50,11 +50,11 @@ func GenerateDomain(namespace, name string) string {
 	return fmt.Sprintf("%s.%s", subdomain, domain)
 }
 
-func InitTest() {
+func InitTest(t *testing.T) {
 	TestContext.KubeConfigPath = KubeConfigPath()
 	framework.Logf("KubeConfigPath: %q", TestContext.KubeConfigPath)
 	if TestContext.KubeConfigPath == "" {
-		framework.Failf("You have to specify KubeConfigPath. (Use KUBECONFIG environment variable.)")
+		t.Fatalf("You have to specify KubeConfigPath. (Use KUBECONFIG environment variable.)")
 	}
 
 	switch p := framework.DeleteTestingNSPolicyType(os.Getenv("DELETE_NS_POLICY")); p {
@@ -65,7 +65,7 @@ func InitTest() {
 	case "":
 		TestContext.DeleteTestingNSPolicy = framework.DeleteTestingNSPolicyAlways
 	default:
-		framework.Failf("Invalid DeleteTestingNSPolicy: %q", TestContext.DeleteTestingNSPolicy)
+		t.Fatalf("Invalid DeleteTestingNSPolicy: %q", TestContext.DeleteTestingNSPolicy)
 	}
 
 	fixedNamespace := os.Getenv("E2E_FIXED_NAMESPACE")
