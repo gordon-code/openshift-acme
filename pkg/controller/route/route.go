@@ -40,6 +40,7 @@ import (
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
@@ -1134,10 +1135,28 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 		route.Spec.TLS.Key = string(certPemData.Key)
 		route.Spec.TLS.Certificate = string(certPemData.Crt)
 
-		// TODO: consider RetryOnConflict with rechecking the managed annotation
-		_, err = rc.routeClient.RouteV1().Routes(routeReadOnly.Namespace).Update(ctx, route, metav1.UpdateOptions{})
+		// Use RetryOnConflict to prevent dropping the in-memory private key and
+		// burning Let's Encrypt rate limits on transient Kubernetes update conflicts.
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			freshRoute, getErr := rc.routeClient.RouteV1().Routes(routeReadOnly.Namespace).Get(ctx, routeReadOnly.Name, metav1.GetOptions{})
+			if getErr != nil {
+				return getErr
+			}
+
+			if freshRoute.Spec.TLS == nil {
+				freshRoute.Spec.TLS = &routev1.TLSConfig{
+					InsecureEdgeTerminationPolicy: routev1.InsecureEdgeTerminationPolicyRedirect,
+					Termination:                   routev1.TLSTerminationEdge,
+				}
+			}
+			freshRoute.Spec.TLS.Key = string(certPemData.Key)
+			freshRoute.Spec.TLS.Certificate = string(certPemData.Crt)
+
+			_, updateErr := rc.routeClient.RouteV1().Routes(freshRoute.Namespace).Update(ctx, freshRoute, metav1.UpdateOptions{})
+			return updateErr
+		})
 		if err != nil {
-			return fmt.Errorf("can't update route %s/%s with new certificates: %v", routeReadOnly.Namespace, route.Name, err)
+			return fmt.Errorf("can't update route %s/%s with new certificates after retries: %v", routeReadOnly.Namespace, routeReadOnly.Name, err)
 		}
 
 		err = rc.CleanupExposerObjects(ctx, routeReadOnly)
@@ -1153,16 +1172,16 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 		// needed to attach the certificate (likely due to a previous Route Update conflict).
 		// We must abandon this orphaned order, trigger a backoff, and start fresh.
 		klog.Warningf("Route %q: Order %q is Valid but we lack the private key. Restarting order.", key, order.URI)
-		
+
 		if status.ProvisioningStatus.OrderStatus != previousOrderStatus {
 			status.ProvisioningStatus.Failures += 1
 		}
-		
+
 		err = rc.CleanupExposerObjects(ctx, routeReadOnly)
 		if err != nil {
 			klog.Errorf("Can't cleanup exposer objects: %v", err)
 		}
-		
+
 		status.ProvisioningStatus.OrderURI = ""
 		status.ProvisioningStatus.OrderStatus = ""
 		return rc.updateStatus(ctx, routeReadOnly, status)
