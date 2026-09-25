@@ -1149,11 +1149,23 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 		return nil
 
 	case acme.StatusValid:
-		// TODO: fix the golang acme lib
-		// Unfortunately the golang acme lib actively waits in 'CreateOrderCert'
-		// so we can't take the appropriate asynchronous action here.
-		// The logic is included in handling acme.StatusReady
-		return nil
+		// We have a Valid order on the ACME server, but we lost the in-memory private key
+		// needed to attach the certificate (likely due to a previous Route Update conflict).
+		// We must abandon this orphaned order, trigger a backoff, and start fresh.
+		klog.Warningf("Route %q: Order %q is Valid but we lack the private key. Restarting order.", key, order.URI)
+		
+		if status.ProvisioningStatus.OrderStatus != previousOrderStatus {
+			status.ProvisioningStatus.Failures += 1
+		}
+		
+		err = rc.CleanupExposerObjects(ctx, routeReadOnly)
+		if err != nil {
+			klog.Errorf("Can't cleanup exposer objects: %v", err)
+		}
+		
+		status.ProvisioningStatus.OrderURI = ""
+		status.ProvisioningStatus.OrderStatus = ""
+		return rc.updateStatus(ctx, routeReadOnly, status)
 
 	case acme.StatusInvalid:
 		rc.recorder.Eventf(routeReadOnly, corev1.EventTypeWarning, "AcmeFailedOrder", "Order %q for domain %q failed: %v", order.URI, routeReadOnly.Spec.Host, order.Error)
