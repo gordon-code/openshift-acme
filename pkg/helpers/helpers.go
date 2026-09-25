@@ -1,3 +1,5 @@
+// Package helpers provides shared certificate and key parsing helpers used
+// across the openshift-acme controllers.
 package helpers
 
 import (

@@ -1,3 +1,5 @@
+// Package version implements the "version" subcommand shared by the
+// openshift-acme commands.
 package version
 
 import (
@@ -15,7 +17,7 @@ func NewVersionCommand(fullName string, versionInfo apimachineryversion.Info, ou
 		Short: "Display version",
 		Long:  "Display version",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Fprintf(out, "%s %v\n", fullName, versionInfo)
+			_, _ = fmt.Fprintf(out, "%s %v\n", fullName, versionInfo)
 		},
 	}
 

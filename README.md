@@ -1,7 +1,10 @@
+[![CI](https://github.com/gordon-code/openshift-acme/actions/workflows/ci.yaml/badge.svg)](https://github.com/gordon-code/openshift-acme/actions/workflows/ci.yaml)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=KQE4S78YRTEA6)
 
 # openshift-acme
-openshift-acme is ACME Controller for OpenShift and Kubernetes clusters. It will automatically provision certificates using ACME v2 protocol and manage their lifecycle including automatic renewals.
+openshift-acme is ACME Controller for OpenShift and Kubernetes clusters. It will automatically provision certificates using the ACME v2 protocol (RFC 8555) and manage their lifecycle including automatic renewals.
+
+> **This is a fork.** Upstream [`tnozicka/openshift-acme`](https://github.com/tnozicka/openshift-acme) has been archived since 2023. [`gordon-code/openshift-acme`](https://github.com/gordon-code/openshift-acme) modernizes it for **OpenShift 4.22 (Kubernetes 1.35)**. Controller and exposer images are published to `ghcr.io/gordon-code/openshift-acme-controller` and `ghcr.io/gordon-code/openshift-acme-exposer`.
 
 The controller is provider independent but to start with we would recommend you to use Let's Encrypt (https://letsencrypt.org). For more information checkout [section Deploy](#deploy).)
 
@@ -35,7 +38,7 @@ Let's encrypt provides two environments: **live** and **staging**. The environme
 *live* will provide you with **trusted certificates** but has lower rate limits. This is what you want when you're done testing/evaluating the controller
 
 ## Status
-openshift-acme now supports only ACME v2 protocol. For the time of the transition the **old images using ACME v1** are kept in `docker.io/tnozicka/openshift-acme:v0.8.0`. There is no plan to support the old version and while you can still use it until the endpoints are turned off, we advise you to try the new version of the controller and migrate.
+openshift-acme implements the ACME v2 protocol (RFC 8555) only; there is no ACME v1 support or legacy image in this fork.
 
 ### Supported objects
 #### Routes (OpenShift)

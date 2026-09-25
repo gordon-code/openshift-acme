@@ -1,3 +1,5 @@
+// Package genericclioptions provides shared CLI I/O stream plumbing for the
+// openshift-acme command-line tools.
 package genericclioptions
 
 import (

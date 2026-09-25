@@ -1,3 +1,5 @@
+// Package controllerutils provides shared helpers used by the openshift-acme
+// controllers, such as CertIssuer selection and object comparison.
 package controllerutils
 
 import (
@@ -12,7 +14,7 @@ import (
 	"github.com/tnozicka/openshift-acme/pkg/util"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	_ "github.com/openshift/client-go/route/clientset/versioned/scheme"
 	"github.com/tnozicka/openshift-acme/pkg/api"
@@ -78,7 +80,7 @@ func getIssuerConfigMapsForObject(obj metav1.ObjectMeta, globalIssuerNamesapce s
 			return true
 		}
 
-		if lhs.CreationTimestamp.Time.After(rhs.CreationTimestamp.Time) {
+		if lhs.CreationTimestamp.After(rhs.CreationTimestamp.Time) {
 			return true
 		}
 
@@ -133,7 +135,7 @@ func ValidateExposedToken(url, expectedData string) error {
 	if err != nil {
 		return fmt.Errorf("can't GET %q: %w", url, err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 
 	// No response should be longer that this, we need to prevent against DoS
 	buffer := make([]byte, 2048)

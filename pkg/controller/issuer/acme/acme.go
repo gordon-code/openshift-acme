@@ -1,3 +1,5 @@
+// Package acme implements the ACME CertIssuer that drives certificate
+// ordering and account management via golang.org/x/crypto/acme.
 package acme
 
 import (
@@ -28,7 +30,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	"github.com/tnozicka/openshift-acme/pkg/api"
 	"github.com/tnozicka/openshift-acme/pkg/helpers"
@@ -56,12 +58,13 @@ func acceptTerms(tosURL string) bool {
 type AccountController struct {
 	kubeClient                 kubernetes.Interface
 	kubeInformersForNamespaces kubeinformers.Interface
+	acmeTimeout                time.Duration
 
 	cachesToSync []cache.InformerSynced
 
 	recorder record.EventRecorder
 
-	queue workqueue.RateLimitingInterface
+	queue workqueue.TypedRateLimitingInterface[string]
 }
 
 func NewAccountController(
@@ -75,10 +78,11 @@ func NewAccountController(
 	ac := &AccountController{
 		kubeClient:                 kubeClient,
 		kubeInformersForNamespaces: kubeInformersForNamespaces,
+		acmeTimeout:                15 * time.Second,
 
 		recorder: eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: ControllerName}),
 
-		queue: workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
+		queue: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
 	}
 
 	if len(kubeInformersForNamespaces.Namespaces()) < 1 {
@@ -89,17 +93,23 @@ func NewAccountController(
 		klog.V(4).Infof("Setting up kube informers for namespace %q", namespace)
 		informers := kubeInformersForNamespaces.InformersFor(namespace)
 
-		informers.Core().V1().ConfigMaps().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		_, err := informers.Core().V1().ConfigMaps().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 			AddFunc:    ac.addConfigMap,
 			UpdateFunc: ac.updateConfigMap,
 			DeleteFunc: ac.deleteConfigMap,
 		})
+		if err != nil {
+			utilruntime.HandleError(fmt.Errorf("can't add ConfigMap event handler: %w", err))
+		}
 		ac.cachesToSync = append(ac.cachesToSync, informers.Core().V1().ConfigMaps().Informer().HasSynced)
 
-		informers.Core().V1().Secrets().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		_, err = informers.Core().V1().Secrets().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 			// Controller is only provisioning new secret if it is missing so it only cares to reconcile deletes.
 			DeleteFunc: ac.deleteSecret,
 		})
+		if err != nil {
+			utilruntime.HandleError(fmt.Errorf("can't add Secret event handler: %w", err))
+		}
 		ac.cachesToSync = append(ac.cachesToSync, informers.Core().V1().Secrets().Informer().HasSynced)
 	}
 
@@ -147,7 +157,7 @@ func (ac *AccountController) processNextItem(ctx context.Context) bool {
 	}
 	defer ac.queue.Done(key)
 
-	err := ac.sync(ctx, key.(string))
+	err := ac.sync(ctx, key)
 
 	if err == nil {
 		ac.queue.Forget(key)
@@ -349,7 +359,7 @@ func (ac *AccountController) sync(ctx context.Context, key string) error {
 			Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
 		})
 
-		registerCtx, registerCtxCancel := context.WithTimeout(context.TODO(), 15*time.Second)
+		registerCtx, registerCtxCancel := context.WithTimeout(ctx, ac.acmeTimeout)
 		defer registerCtxCancel()
 		account = &acme.Account{
 			Contact: acmeIssuer.Account.Contacts,
@@ -368,7 +378,7 @@ func (ac *AccountController) sync(ctx context.Context, key string) error {
 				corev1.TLSPrivateKeyKey: keyPem,
 			},
 		}
-		secret, err = ac.kubeClient.CoreV1().Secrets(cmReadOnly.Namespace).Create(secret)
+		secret, err = ac.kubeClient.CoreV1().Secrets(cmReadOnly.Namespace).Create(ctx, secret, metav1.CreateOptions{})
 		if err != nil {
 			return err
 		}
@@ -391,7 +401,7 @@ func (ac *AccountController) sync(ctx context.Context, key string) error {
 		// Update the acme account to reflect user changes
 		account.Contact = acmeIssuer.Account.Contacts
 
-		updateCtx, updateCtxCancel := context.WithTimeout(context.TODO(), 15*time.Second)
+		updateCtx, updateCtxCancel := context.WithTimeout(ctx, ac.acmeTimeout)
 		defer updateCtxCancel()
 		account, err = client.UpdateReg(updateCtx, account)
 		if err != nil {
@@ -400,7 +410,7 @@ func (ac *AccountController) sync(ctx context.Context, key string) error {
 		ac.recorder.Event(cmReadOnly, corev1.EventTypeNormal, "AcmeAccountUpdated", "ACME account was updated to reflect data in API.")
 		klog.V(2).Infof("Updated ACME account %s/%s to: %#v", cmReadOnly.Namespace, cmReadOnly.Name, account)
 	} else if len(acmeIssuer.Account.Status.URI) == 0 {
-		getRegCtx, getRegCtxCancel := context.WithTimeout(context.TODO(), 15*time.Second)
+		getRegCtx, getRegCtxCancel := context.WithTimeout(ctx, ac.acmeTimeout)
 		defer getRegCtxCancel()
 		// url argument is not needed for RFC 8555 compliant CAs
 		account, err = client.GetReg(getRegCtx, "")
@@ -430,7 +440,7 @@ func (ac *AccountController) sync(ctx context.Context, key string) error {
 		return nil
 	}
 
-	_, err = ac.kubeClient.CoreV1().ConfigMaps(cmReadOnly.Namespace).Update(cm)
+	_, err = ac.kubeClient.CoreV1().ConfigMaps(cmReadOnly.Namespace).Update(ctx, cm, metav1.UpdateOptions{})
 	if err != nil {
 		return err
 	}

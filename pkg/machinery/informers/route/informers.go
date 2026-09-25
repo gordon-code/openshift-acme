@@ -1,4 +1,6 @@
-package kube
+// Package route provides an OpenShift Route informer factory scoped to one or
+// more namespaces.
+package route
 
 import (
 	routeclientset "github.com/openshift/client-go/route/clientset/versioned"

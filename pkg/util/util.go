@@ -1,3 +1,5 @@
+// Package util provides shared predicates and helpers for working with
+// openshift-acme managed Kubernetes and Route objects.
 package util
 
 import (

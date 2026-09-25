@@ -1,3 +1,5 @@
+// Package httpserver implements the minimal HTTP server the exposer uses to
+// serve ACME HTTP-01 challenge responses.
 package httpserver
 
 import (
@@ -10,7 +12,7 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 )
 
 type Server struct {
@@ -30,7 +32,9 @@ func NewServer(listenAddr string, uriToResponse map[string]string) *Server {
 		uriToResponse: uriToResponse,
 
 		server: http.Server{
-			Addr: listenAddr,
+			Addr:              listenAddr,
+			ReadHeaderTimeout: 5 * time.Second,
+			IdleTimeout:       60 * time.Second,
 		},
 	}
 }
@@ -63,8 +67,6 @@ func (s *Server) handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNotFound)
-
-	return
 }
 
 func (s *Server) ParseData(data []byte) error {
@@ -131,11 +133,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) WaitForConnect(ctx context.Context, pollInterval time.Duration) error {
-	return wait.PollImmediateUntil(pollInterval, func() (done bool, err error) {
+	return wait.PollUntilContextCancel(ctx, pollInterval, true, func(ctx context.Context) (done bool, err error) {
 		_, err = net.DialTimeout("tcp", s.getListeningAddr(), 3*time.Second)
 		if err == nil {
 			return true, nil
 		}
 		return false, nil
-	}, ctx.Done())
+	})
 }

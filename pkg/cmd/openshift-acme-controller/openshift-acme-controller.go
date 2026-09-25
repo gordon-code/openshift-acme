@@ -1,4 +1,6 @@
-package openshift_acme_controller
+// Package openshiftacmecontroller implements the openshift-acme-controller
+// command, which reconciles Routes annotated for automatic TLS provisioning.
+package openshiftacmecontroller
 
 import (
 	"context"
@@ -12,19 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	kvalidation "k8s.io/apimachinery/pkg/api/validation"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/errors"
-	"k8s.io/apimachinery/pkg/util/uuid"
-	"k8s.io/client-go/kubernetes"
-	restclient "k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/tools/leaderelection"
-	"k8s.io/client-go/tools/leaderelection/resourcelock"
-	"k8s.io/klog"
-
 	routeclientset "github.com/openshift/client-go/route/clientset/versioned"
-
 	"github.com/tnozicka/openshift-acme/pkg/api"
 	"github.com/tnozicka/openshift-acme/pkg/cmd/genericclioptions"
 	cmdutil "github.com/tnozicka/openshift-acme/pkg/cmd/util"
@@ -33,10 +23,24 @@ import (
 	kubeinformers "github.com/tnozicka/openshift-acme/pkg/machinery/informers/kube"
 	routeinformers "github.com/tnozicka/openshift-acme/pkg/machinery/informers/route"
 	"github.com/tnozicka/openshift-acme/pkg/signals"
+	kvalidation "k8s.io/apimachinery/pkg/api/validation"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/client-go/kubernetes"
+	coordinationv1 "k8s.io/client-go/kubernetes/typed/coordination/v1"
+	corev1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	restclient "k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/leaderelection"
+	"k8s.io/client-go/tools/leaderelection/resourcelock"
+	"k8s.io/klog/v2"
 )
 
 type Options struct {
 	genericclioptions.IOStreams
+
+	NewResourceLock func(lockType string, namespace string, name string, coreClient corev1.CoreV1Interface, coordinationClient coordinationv1.CoordinationV1Interface, rlc resourcelock.ResourceLockConfig) (resourcelock.Interface, error)
 
 	Annotation                  string
 	Workers                     int
@@ -60,9 +64,10 @@ type Options struct {
 
 func NewOptions(streams genericclioptions.IOStreams) *Options {
 	return &Options{
-		IOStreams:  streams,
-		Workers:    10,
-		Kubeconfig: "",
+		IOStreams:       streams,
+		NewResourceLock: resourcelock.New,
+		Workers:         50,
+		Kubeconfig:      "",
 
 		LeaderelectionLeaseDuration: 60 * time.Second,
 		LeaderelectionRenewDeadline: 35 * time.Second,
@@ -71,7 +76,7 @@ func NewOptions(streams genericclioptions.IOStreams) *Options {
 		CertOrderBackoffMax:         24 * time.Hour,
 		CertDefaultRSAKeyBitSize:    4096,
 
-		Annotation:       api.DefaultTlsAcmeAnnotation,
+		Annotation:       api.DefaultTLSAcmeAnnotation,
 		AcmeOrderTimeout: 15 * time.Minute,
 
 		ExposerImage: "",
@@ -273,15 +278,18 @@ func (o *Options) Run(cmd *cobra.Command, streams genericclioptions.IOStreams) e
 
 	// we use the Lease lock type since edits to Leases are less common
 	// and fewer objects in the cluster watch "all Leases".
-	lock := &resourcelock.ConfigMapLock{
-		ConfigMapMeta: metav1.ObjectMeta{
-			Name:      "acme-controller-locks",
-			Namespace: o.ControllerNamespace,
-		},
-		Client: o.kubeClient.CoreV1(),
-		LockConfig: resourcelock.ResourceLockConfig{
+	lock, err := o.NewResourceLock(
+		resourcelock.LeasesResourceLock,
+		o.ControllerNamespace,
+		"acme-controller-locks",
+		o.kubeClient.CoreV1(),
+		o.kubeClient.CoordinationV1(),
+		resourcelock.ResourceLockConfig{
 			Identity: id,
 		},
+	)
+	if err != nil {
+		return fmt.Errorf("can't create resource lock: %w", err)
 	}
 
 	leChan := make(chan struct{})

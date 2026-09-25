@@ -1,3 +1,5 @@
+// Package cert provides helpers for converting ACME-issued DER certificates
+// into PEM-encoded TLS secrets and validating their lifetime.
 package cert
 
 import (
@@ -29,7 +31,7 @@ func NewCertificateFromDER(der [][]byte, privateKey *rsa.PrivateKey) (certificat
 			return
 		}
 
-		pem.Encode(certBuffer, &pem.Block{Type: "CERTIFICATE", Bytes: cert})
+		_ = pem.Encode(certBuffer, &pem.Block{Type: "CERTIFICATE", Bytes: cert})
 	}
 	certificate.Crt = certBuffer.Bytes()
 
@@ -57,5 +59,5 @@ func (c *CertPemData) Certificate() (*x509.Certificate, error) {
 }
 
 func IsValid(c *x509.Certificate, t time.Time) bool {
-	return !(t.Before(c.NotBefore) || t.After(c.NotAfter))
+	return !t.Before(c.NotBefore) && !t.After(c.NotAfter)
 }

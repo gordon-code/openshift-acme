@@ -44,6 +44,15 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - events
+  verbs:
+  - create
+  - update
+  - patch
+
+- apiGroups:
+  - ""
+  resources:
   - limitranges
   verbs:
   - get
@@ -62,3 +71,12 @@ rules:
   - update
   - patch
   - delete
+
+- apiGroups:
+  - "coordination.k8s.io"
+  resources:
+  - leases
+  verbs:
+  - create
+  - get
+  - update

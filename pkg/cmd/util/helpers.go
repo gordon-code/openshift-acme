@@ -1,3 +1,5 @@
+// Package util provides shared CLI helper functions for the openshift-acme
+// commands.
 package util
 
 import (
@@ -10,7 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/errors"
 
 	"github.com/spf13/cobra"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -19,12 +21,12 @@ const (
 
 func UsageError(cmd *cobra.Command, format string, args ...interface{}) error {
 	msg := fmt.Sprintf(format, args...)
-	return fmt.Errorf("%s\nSee '%s -h' for help and examples.", msg, cmd.CommandPath())
+	return fmt.Errorf("%s\nSee '%s -h' for help and examples", msg, cmd.CommandPath())
 }
 
 func NormalizeNameForEnvVar(name string) string {
 	s := strings.ToUpper(name)
-	s = strings.Replace(s, "-", "_", -1)
+	s = strings.ReplaceAll(s, "-", "_")
 	return s
 }
 
@@ -50,8 +52,6 @@ func ReadFlagsFromEnv(prefix string, cmd *cobra.Command) error {
 		}
 
 		f.Changed = true
-
-		return
 	})
 
 	return errors.NewAggregate(errs)

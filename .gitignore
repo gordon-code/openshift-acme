@@ -1,2 +1,5 @@
 /openshift-acme-controller
 /openshift-acme-exposer
+
+# Local developer scratch and notes.
+.dev/

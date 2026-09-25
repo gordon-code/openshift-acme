@@ -12,13 +12,13 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 )
 
 func init() {
 	klog.InitFlags(nil)
-	flag.Set("logtostderr", "true")
-	flag.Set("v", "9")
+	_ = flag.Set("logtostderr", "true")
+	_ = flag.Set("v", "9")
 }
 
 func TestNewServer(t *testing.T) {
@@ -60,8 +60,16 @@ func TestNewServer(t *testing.T) {
 				t.Errorf("expected %q, got %q", tc.server.server.Addr, s.listeningAddr)
 			}
 
+			if s.server.ReadHeaderTimeout != 5*time.Second {
+				t.Errorf("expected ReadHeaderTimeout %s, got %s", 5*time.Second, s.server.ReadHeaderTimeout)
+			}
+
+			if s.server.IdleTimeout != 60*time.Second {
+				t.Errorf("expected IdleTimeout %s, got %s", 60*time.Second, s.server.IdleTimeout)
+			}
+
 			if !reflect.DeepEqual(tc.server.uriToResponse, s.uriToResponse) {
-				t.Errorf(cmp.Diff(tc.server.uriToResponse, s.uriToResponse))
+				t.Errorf("%s", cmp.Diff(tc.server.uriToResponse, s.uriToResponse))
 			}
 		})
 	}
@@ -185,5 +193,17 @@ func TestRun(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func TestWaitForConnect_Cancellation(t *testing.T) {
+	s := NewServer("localhost:0", map[string]string{})
+	// Create a context that is already canceled
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := s.WaitForConnect(ctx, 100*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected error due to canceled context, got nil")
 	}
 }

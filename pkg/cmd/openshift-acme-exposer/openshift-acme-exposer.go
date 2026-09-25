@@ -1,4 +1,6 @@
-package openshift_acme
+// Package openshiftacmeexposer implements the openshift-acme-exposer command,
+// which serves ACME HTTP-01 challenge responses.
+package openshiftacmeexposer
 
 import (
 	"context"
@@ -12,9 +14,10 @@ import (
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/util/errors"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	kvalidationutil "k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	"github.com/tnozicka/openshift-acme/pkg/cmd/genericclioptions"
 	cmdutil "github.com/tnozicka/openshift-acme/pkg/cmd/util"
@@ -99,9 +102,9 @@ func (o *Options) Validate() error {
 		return fmt.Errorf("invalid port %v: %s", o.Port, strings.Join(errs, ", "))
 	}
 
-	errs = kvalidationutil.IsValidIP(o.ListenIP)
-	if len(errs) > 0 {
-		return fmt.Errorf("invalid listen IP %q: %s", o.ListenIP, strings.Join(errs, ", "))
+	ipErrs := kvalidationutil.IsValidIP(field.NewPath("listen-ip"), o.ListenIP)
+	if len(ipErrs) > 0 {
+		return fmt.Errorf("invalid listen IP %q: %s", o.ListenIP, ipErrs.ToAggregate())
 	}
 
 	return nil
@@ -154,12 +157,12 @@ func (o *Options) Run(cmd *cobra.Command, out io.Writer) error {
 		<-ctx.Done()
 
 		// Second SIGINT results in exit(1) so it can be forcefully terminated that way for now
+		//nolint:contextcheck // ctx is already Done() here; shutdown intentionally uses a fresh context
 		err := server.Shutdown(context.TODO())
 		if err != nil {
 			errCh <- err
 			return
 		}
-		return
 	}()
 
 	wg.Wait()
