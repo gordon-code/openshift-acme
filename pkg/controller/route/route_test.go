@@ -7,6 +7,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"flag"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	routeclientset "github.com/openshift/client-go/route/clientset/versioned/fake"
+	"github.com/tnozicka/openshift-acme/pkg/api"
 	kubeinformers "github.com/tnozicka/openshift-acme/pkg/machinery/informers/kube"
 	routeinformers "github.com/tnozicka/openshift-acme/pkg/machinery/informers/route"
 	corev1 "k8s.io/api/core/v1"
@@ -29,8 +31,11 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	apierrors "k8s.io/apimachinery/pkg/util/errors"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
+	coretesting "k8s.io/client-go/testing"
 	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/klog/v2"
@@ -707,5 +712,68 @@ acmeCertIssuer:
 	}
 	if !strings.Contains(err.Error(), "context deadline exceeded") {
 		t.Errorf("Expected context deadline exceeded error, got: %v", err)
+	}
+}
+func TestUpdateStatus_MergePatch(t *testing.T) {
+	rc, routeClient, _, _ := newTestRouteController()
+	ctx := context.TODO()
+
+	route := &routev1.Route{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-route",
+			Namespace: "default",
+			// Annotations deliberately left nil to test the nil-map nil-pointer issue!
+		},
+	}
+	routeClient.RouteV1().Routes("default").Create(ctx, route, metav1.CreateOptions{})
+
+	status := &api.Status{
+		ObservedGeneration: 1,
+		ProvisioningStatus: api.CertProvisioningStatus{
+			StartedAt:   time.Now(),
+			OrderURI:    "http://example.com/order",
+			OrderStatus: "pending",
+		},
+	}
+
+	patched := false
+	routeClient.PrependReactor("patch", "routes", func(action coretesting.Action) (handled bool, ret runtime.Object, err error) {
+		patchAction := action.(coretesting.PatchAction)
+
+		if patchAction.GetPatchType() != types.MergePatchType {
+			t.Errorf("Expected MergePatchType, got %v", patchAction.GetPatchType())
+		}
+
+		patchData := patchAction.GetPatch()
+		var payload map[string]interface{}
+		if err := json.Unmarshal(patchData, &payload); err != nil {
+			t.Fatalf("Failed to parse patch data: %v", err)
+		}
+
+		metadata, ok := payload["metadata"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("Patch missing metadata block: %v", payload)
+		}
+
+		annotations, ok := metadata["annotations"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("Patch missing annotations block: %v", metadata)
+		}
+
+		if _, exists := annotations[api.AcmeStatusAnnotation]; !exists {
+			t.Errorf("Patch missing %q annotation, got: %v", api.AcmeStatusAnnotation, annotations)
+		}
+
+		patched = true
+		return true, route, nil
+	})
+
+	err := rc.updateStatus(ctx, route, status)
+	if err != nil {
+		t.Fatalf("updateStatus failed: %v", err)
+	}
+
+	if !patched {
+		t.Error("Expected Patch reactor to be invoked")
 	}
 }
