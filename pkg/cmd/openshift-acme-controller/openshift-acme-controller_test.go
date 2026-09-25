@@ -9,9 +9,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tnozicka/openshift-acme/pkg/cmd/genericclioptions"
 	"k8s.io/client-go/kubernetes/fake"
-	"k8s.io/client-go/tools/leaderelection/resourcelock"
-	corev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	coordinationv1 "k8s.io/client-go/kubernetes/typed/coordination/v1"
+	corev1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/tools/leaderelection/resourcelock"
 )
 
 func TestRun_ResourceLockError(t *testing.T) {
@@ -25,12 +25,12 @@ func TestRun_ResourceLockError(t *testing.T) {
 
 	fakeClient := fake.NewSimpleClientset()
 	opts := &Options{
-		kubeClient: fakeClient,
-		ControllerNamespace: "default",
+		kubeClient:                  fakeClient,
+		ControllerNamespace:         "default",
 		LeaderelectionLeaseDuration: 60 * time.Second,
 		LeaderelectionRenewDeadline: 35 * time.Second,
 		LeaderelectionRetryPeriod:   10 * time.Second,
-		NewResourceLock: mockNewResourceLock,
+		NewResourceLock:             mockNewResourceLock,
 	}
 
 	err := opts.Run(&cobra.Command{}, genericclioptions.IOStreams{})
