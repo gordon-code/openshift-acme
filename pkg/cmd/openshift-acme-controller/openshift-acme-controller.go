@@ -14,18 +14,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	kvalidation "k8s.io/apimachinery/pkg/api/validation"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/errors"
-	"k8s.io/apimachinery/pkg/util/uuid"
-	"k8s.io/client-go/kubernetes"
-	restclient "k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/tools/leaderelection"
-	"k8s.io/client-go/tools/leaderelection/resourcelock"
-	coordinationv1 "k8s.io/client-go/kubernetes/typed/coordination/v1"
-	corev1 "k8s.io/client-go/kubernetes/typed/core/v1"
-	"k8s.io/klog/v2"
 	routeclientset "github.com/openshift/client-go/route/clientset/versioned"
 	"github.com/tnozicka/openshift-acme/pkg/api"
 	"github.com/tnozicka/openshift-acme/pkg/cmd/genericclioptions"
@@ -35,9 +23,19 @@ import (
 	kubeinformers "github.com/tnozicka/openshift-acme/pkg/machinery/informers/kube"
 	routeinformers "github.com/tnozicka/openshift-acme/pkg/machinery/informers/route"
 	"github.com/tnozicka/openshift-acme/pkg/signals"
+	kvalidation "k8s.io/apimachinery/pkg/api/validation"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/client-go/kubernetes"
+	coordinationv1 "k8s.io/client-go/kubernetes/typed/coordination/v1"
+	corev1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	restclient "k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/leaderelection"
+	"k8s.io/client-go/tools/leaderelection/resourcelock"
+	"k8s.io/klog/v2"
 )
-
-var newResourceLock = resourcelock.New
 
 type Options struct {
 	genericclioptions.IOStreams

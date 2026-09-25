@@ -35,9 +35,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	apierrors "k8s.io/apimachinery/pkg/util/errors"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
-	coretesting "k8s.io/client-go/testing"
 	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes/fake"
+	coretesting "k8s.io/client-go/testing"
 	"k8s.io/klog/v2"
 
 	routev1 "github.com/openshift/api/route/v1"
@@ -725,7 +725,7 @@ func TestUpdateStatus_MergePatch(t *testing.T) {
 			// Annotations deliberately left nil to test the nil-map nil-pointer issue!
 		},
 	}
-	routeClient.RouteV1().Routes("default").Create(ctx, route, metav1.CreateOptions{})
+	_, _ = routeClient.RouteV1().Routes("default").Create(ctx, route, metav1.CreateOptions{})
 
 	status := &api.Status{
 		ObservedGeneration: 1,
