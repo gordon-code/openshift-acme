@@ -944,7 +944,7 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 
 				err = adjustContainerResourceRequirements(&desiredExposerRS.Spec.Template.Spec.Containers[0].Resources, limitRanges)
 				if err != nil {
-					rc.recorder.Eventf(routeReadOnly, corev1.EventTypeWarning, "ExposerPodResourceRequirementsError", err.Error())
+					rc.recorder.Eventf(routeReadOnly, corev1.EventTypeWarning, "ExposerPodResourceRequirementsError", "%v", err)
 					return nil
 				}
 
