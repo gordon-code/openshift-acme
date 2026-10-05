@@ -569,8 +569,18 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 	}
 
 	if len(reason) == 0 {
-		klog.V(4).Infof("Route %q doesn't need new certificate.", key)
-		return rc.updateStatus(ctx, routeReadOnly, status)
+		switch status.ProvisioningStatus.OrderStatus {
+		case acme.StatusPending, acme.StatusProcessing, acme.StatusReady:
+			reason = "Continuing pending order"
+		default:
+			klog.V(4).Infof("Route %q doesn't need new certificate.", key)
+			if status.ProvisioningStatus.OrderURI != "" || status.ProvisioningStatus.OrderStatus != "" {
+				status.ProvisioningStatus.OrderURI = ""
+				status.ProvisioningStatus.OrderStatus = ""
+				return rc.updateStatus(ctx, routeReadOnly, status)
+			}
+			return nil
+		}
 	}
 
 	klog.V(2).Infof("Route %q needs new certificate: %v", key, reason)
@@ -934,7 +944,7 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 
 				err = adjustContainerResourceRequirements(&desiredExposerRS.Spec.Template.Spec.Containers[0].Resources, limitRanges)
 				if err != nil {
-					rc.recorder.Eventf(routeReadOnly, corev1.EventTypeWarning, "ExposerPodResourceRequirementsError", err.Error())
+					rc.recorder.Eventf(routeReadOnly, corev1.EventTypeWarning, "ExposerPodResourceRequirementsError", "%v", err)
 					return nil
 				}
 

@@ -1,6 +1,35 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": [
-    "Managed by khepri-deps/renovate — global config provides weekly Monday schedule, 14-day release cooldown, and vulnerability alert bypass."
+    "Managed by khepri-deps/renovate \u2014 global config provides weekly Monday schedule, 14-day release cooldown, and vulnerability alert bypass."
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "fileMatch": [
+        "^\\.github/workflows/.*\\.ya?ml$"
+      ],
+      "matchStrings": [
+        "\\s+go-version: [\"']?(?<currentValue>[^\"'\\s]+)[\"']?"
+      ],
+      "depNameTemplate": "go",
+      "datasourceTemplate": "golang-version"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchDatasources": [
+        "golang-version",
+        "go",
+        "docker",
+        "github-tags"
+      ],
+      "matchPackageNames": [
+        "go",
+        "registry.access.redhat.com/ubi9/go-toolset",
+        "golangci/golangci-lint"
+      ],
+      "groupName": "Go Toolchain and Dependencies"
+    }
   ]
 }
