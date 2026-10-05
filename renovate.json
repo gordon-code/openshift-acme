@@ -21,11 +21,13 @@
       "matchDatasources": [
         "golang-version",
         "go",
-        "docker"
+        "docker",
+        "github-tags"
       ],
       "matchPackageNames": [
         "go",
-        "registry.access.redhat.com/ubi9/go-toolset"
+        "registry.access.redhat.com/ubi9/go-toolset",
+        "golangci/golangci-lint"
       ],
       "groupName": "Go Toolchain and Dependencies"
     }
