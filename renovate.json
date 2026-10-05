@@ -15,5 +15,19 @@
       "depNameTemplate": "go",
       "datasourceTemplate": "golang-version"
     }
+  ],
+  "packageRules": [
+    {
+      "matchDatasources": [
+        "golang-version",
+        "go",
+        "docker"
+      ],
+      "matchPackageNames": [
+        "go",
+        "registry.access.redhat.com/ubi9/go-toolset"
+      ],
+      "groupName": "Go Toolchain and Dependencies"
+    }
   ]
 }
