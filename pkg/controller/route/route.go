@@ -400,9 +400,9 @@ func (rc *RouteController) resolveControllerRef(namespace string, controllerRef 
 	return route
 }
 
-func needsCertKey(t time.Time, route *routev1.Route) (string, error) {
+func needsCertKey(t time.Time, route *routev1.Route) (string, time.Duration, error) {
 	if route.Spec.TLS == nil || route.Spec.TLS.Key == "" || route.Spec.TLS.Certificate == "" {
-		return "Route is missing CertKey", nil
+		return "Route is missing CertKey", 0, nil
 	}
 
 	certPemData := &cert.CertPemData{
@@ -411,17 +411,17 @@ func needsCertKey(t time.Time, route *routev1.Route) (string, error) {
 	}
 	certificate, err := certPemData.Certificate()
 	if err != nil {
-		return "", fmt.Errorf("can't decode certificate from Route %s/%s: %v", route.Namespace, route.Name, err)
+		return "", 0, fmt.Errorf("can't decode certificate from Route %s/%s: %v", route.Namespace, route.Name, err)
 	}
 
 	err = certificate.VerifyHostname(route.Spec.Host)
 	if err != nil {
 		klog.V(5).Info(err)
-		return "Existing certificate doesn't match hostname", nil
+		return "Existing certificate doesn't match hostname", 0, nil
 	}
 
 	if !cert.IsValid(certificate, t) {
-		return "Already expired", nil
+		return "Already expired", 0, nil
 	}
 
 	// We need to trigger renewals before the certs expire
@@ -430,7 +430,7 @@ func needsCertKey(t time.Time, route *routev1.Route) (string, error) {
 
 	// This is the deadline when we start renewing
 	if remains <= lifetime/3 {
-		return "In renewal period", nil
+		return "In renewal period", 0, nil
 	}
 
 	// In case many certificates were provisioned at specific time
@@ -443,11 +443,17 @@ func needsCertKey(t time.Time, route *routev1.Route) (string, error) {
 		n := r.NormFloat64()*RenewalStandardDeviation + RenewalMean
 		// We use left half of normal distribution (all negative numbers).
 		if n < 0 {
-			return "Proactive renewal", nil
+			return "Proactive renewal", 0, nil
 		}
+
+		// Coin flip deferred proactive renewal; schedule re-evaluation at the
+		// mandatory renewal boundary (lifetime/3) so idle clusters don't miss it.
+		return "", remains - lifetime/3, nil
 	}
 
-	return "", nil
+	// Healthy certificate outside the renewal window; schedule re-evaluation
+	// when the proactive renewal window opens (lifetime/2).
+	return "", remains - lifetime/2, nil
 }
 
 func (rc *RouteController) getStatus(routeReadOnly *routev1.Route) (*api.Status, error) {
@@ -563,7 +569,7 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 	}
 	status.ProvisioningStatus.EarliestAttemptAt = status.ProvisioningStatus.StartedAt.Add(backoff)
 
-	reason, err := needsCertKey(time.Now(), routeReadOnly)
+	reason, requeueAfter, err := needsCertKey(time.Now(), routeReadOnly)
 	if err != nil {
 		return err
 	}
@@ -574,6 +580,10 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 			reason = "Continuing pending order"
 		default:
 			klog.V(4).Infof("Route %q doesn't need new certificate.", key)
+			if requeueAfter > 0 {
+				klog.V(4).Infof("Scheduling next renewal check for Route %q in %v", key, requeueAfter)
+				rc.queue.AddAfter(key, requeueAfter)
+			}
 			if status.ProvisioningStatus.OrderURI != "" || status.ProvisioningStatus.OrderStatus != "" {
 				status.ProvisioningStatus.OrderURI = ""
 				status.ProvisioningStatus.OrderStatus = ""

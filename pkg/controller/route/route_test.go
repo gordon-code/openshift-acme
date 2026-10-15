@@ -38,6 +38,7 @@ import (
 	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes/fake"
 	coretesting "k8s.io/client-go/testing"
+	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
 	routev1 "github.com/openshift/api/route/v1"
@@ -471,15 +472,24 @@ func TestNeedsCertKey(t *testing.T) {
 	r := rand.New(s)
 	n := r.NormFloat64()*RenewalStandardDeviation + RenewalMean
 	expectedProactiveReason := ""
+	expectedProactiveRequeue := 40*24*time.Hour - (100*24*time.Hour)/3
 	if n < 0 {
 		expectedProactiveReason = "Proactive renewal"
+		expectedProactiveRequeue = 0
 	}
 
+	// 64-day and 47-day Let's Encrypt certificate lifecycles
+	healthy64DayCert := generateTestCertificate(t, []string{host}, now.Add(-14*24*time.Hour), now.Add(50*24*time.Hour))
+	renewal64DayCert := generateTestCertificate(t, []string{host}, now.Add(-44*24*time.Hour), now.Add(20*24*time.Hour))
+	healthy47DayCert := generateTestCertificate(t, []string{host}, now.Add(-7*24*time.Hour), now.Add(40*24*time.Hour))
+	renewal47DayCert := generateTestCertificate(t, []string{host}, now.Add(-32*24*time.Hour), now.Add(15*24*time.Hour))
+
 	tt := []struct {
-		name           string
-		route          *routev1.Route
-		expectedReason string
-		expectedErr    error
+		name            string
+		route           *routev1.Route
+		expectedReason  string
+		expectedRequeue time.Duration
+		expectedErr     error
 	}{
 		{
 			name:           "missing CertKey - nil TLS",
@@ -550,7 +560,8 @@ func TestNeedsCertKey(t *testing.T) {
 					},
 				},
 			},
-			expectedReason: expectedProactiveReason,
+			expectedReason:  expectedProactiveReason,
+			expectedRequeue: expectedProactiveRequeue,
 		},
 		{
 			name: "healthy cert - no renewal needed",
@@ -563,19 +574,77 @@ func TestNeedsCertKey(t *testing.T) {
 					},
 				},
 			},
-			expectedReason: "",
+			expectedReason:  "",
+			expectedRequeue: 30 * 24 * time.Hour,
+		},
+		{
+			name: "64-day cert - healthy schedules requeue at lifetime/2",
+			route: &routev1.Route{
+				Spec: routev1.RouteSpec{
+					Host: host,
+					TLS: &routev1.TLSConfig{
+						Certificate: string(healthy64DayCert.Crt),
+						Key:         string(healthy64DayCert.Key),
+					},
+				},
+			},
+			expectedReason:  "",
+			expectedRequeue: 50*24*time.Hour - (64*24*time.Hour)/2,
+		},
+		{
+			name: "64-day cert - in renewal period",
+			route: &routev1.Route{
+				Spec: routev1.RouteSpec{
+					Host: host,
+					TLS: &routev1.TLSConfig{
+						Certificate: string(renewal64DayCert.Crt),
+						Key:         string(renewal64DayCert.Key),
+					},
+				},
+			},
+			expectedReason: "In renewal period",
+		},
+		{
+			name: "47-day cert - healthy schedules requeue at lifetime/2",
+			route: &routev1.Route{
+				Spec: routev1.RouteSpec{
+					Host: host,
+					TLS: &routev1.TLSConfig{
+						Certificate: string(healthy47DayCert.Crt),
+						Key:         string(healthy47DayCert.Key),
+					},
+				},
+			},
+			expectedReason:  "",
+			expectedRequeue: 40*24*time.Hour - (47*24*time.Hour)/2,
+		},
+		{
+			name: "47-day cert - in renewal period",
+			route: &routev1.Route{
+				Spec: routev1.RouteSpec{
+					Host: host,
+					TLS: &routev1.TLSConfig{
+						Certificate: string(renewal47DayCert.Crt),
+						Key:         string(renewal47DayCert.Key),
+					},
+				},
+			},
+			expectedReason: "In renewal period",
 		},
 	}
 
 	for _, tc := range tt {
 		t.Run(tc.name, func(t *testing.T) {
-			reason, err := needsCertKey(now, tc.route)
+			reason, requeueAfter, err := needsCertKey(now, tc.route)
 
 			if !reflect.DeepEqual(err, tc.expectedErr) {
 				t.Errorf("expected error %v, got %v", tc.expectedErr, err)
 			}
 			if reason != tc.expectedReason {
 				t.Errorf("expected reason %q, got %q", tc.expectedReason, reason)
+			}
+			if requeueAfter != tc.expectedRequeue {
+				t.Errorf("expected requeueAfter %v, got %v", tc.expectedRequeue, requeueAfter)
 			}
 		})
 	}
@@ -775,5 +844,163 @@ func TestUpdateStatus_MergePatch(t *testing.T) {
 
 	if !patched {
 		t.Error("Expected Patch reactor to be invoked")
+	}
+}
+
+type recordingRateLimitingQueue struct {
+	workqueue.TypedRateLimitingInterface[string]
+	addedAfter map[string]time.Duration
+}
+
+func (q *recordingRateLimitingQueue) AddAfter(item string, duration time.Duration) {
+	q.addedAfter[item] = duration
+	q.TypedRateLimitingInterface.AddAfter(item, duration)
+}
+
+func TestSync_SchedulesRenewalRequeueForHealthyCert(t *testing.T) {
+	rc, _, _, routeInf := newTestRouteController()
+	recorderQueue := &recordingRateLimitingQueue{
+		TypedRateLimitingInterface: rc.queue,
+		addedAfter:                 make(map[string]time.Duration),
+	}
+	rc.queue = recorderQueue
+
+	now := time.Now()
+	// 47-day Let's Encrypt certificate issued 7 days ago (40 days remaining;
+	// proactive renewal window opens at 23.5 days remaining, ~16.5 days from now).
+	certData := generateTestCertificate(t, []string{"example.com"}, now.Add(-7*24*time.Hour), now.Add(40*24*time.Hour))
+
+	route := &routev1.Route{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-route",
+			Namespace: "default",
+			Annotations: map[string]string{
+				"kubernetes.io/tls-acme": "true",
+			},
+		},
+		Spec: routev1.RouteSpec{
+			Host: "example.com",
+			TLS: &routev1.TLSConfig{
+				Certificate: string(certData.Crt),
+				Key:         string(certData.Key),
+			},
+		},
+		Status: routev1.RouteStatus{
+			Ingress: []routev1.RouteIngress{
+				{
+					Conditions: []routev1.RouteIngressCondition{
+						{
+							Type:   routev1.RouteAdmitted,
+							Status: corev1.ConditionTrue,
+						},
+					},
+				},
+			},
+		},
+	}
+	_ = routeInf.InformersForOrGlobal("default").Route().V1().Routes().Informer().GetIndexer().Add(route)
+
+	err := rc.sync(context.Background(), "default/test-route")
+	if err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+
+	delay, ok := recorderQueue.addedAfter["default/test-route"]
+	if !ok {
+		t.Fatal("expected Route to be scheduled via queue.AddAfter for future renewal check, but it was not")
+	}
+
+	expectedDelay := 40*24*time.Hour - (47*24*time.Hour)/2
+	// Allow a few seconds tolerance for wall-clock advancement between cert generation and sync().
+	if diff := delay - expectedDelay; diff < -10*time.Second || diff > 10*time.Second {
+		t.Errorf("expected requeue delay ~%v, got %v (diff %v)", expectedDelay, delay, diff)
+	}
+}
+
+func TestSync_DoesNotScheduleRenewalRequeueWhenContinuingPendingOrder(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	rc, routeClient, kubeInf, routeInf := newTestRouteController()
+	recorderQueue := &recordingRateLimitingQueue{
+		TypedRateLimitingInterface: rc.queue,
+		addedAfter:                 make(map[string]time.Duration),
+	}
+	rc.queue = recorderQueue
+
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-issuer",
+			Namespace: "default",
+		},
+		Data: map[string]string{
+			"cert-issuer.types.acme.openshift.io": `type: ACME
+secretName: letsencrypt-live
+acmeCertIssuer:
+  directoryURL: ` + ts.URL,
+		},
+	}
+	_ = kubeInf.InformersForOrGlobal("default").Core().V1().ConfigMaps().Informer().GetIndexer().Add(cm)
+
+	key, _ := rsa.GenerateKey(cryptorand.Reader, 2048)
+	keyPem := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "letsencrypt-live",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			corev1.TLSCertKey:       []byte(ts.URL),
+			corev1.TLSPrivateKeyKey: keyPem,
+		},
+	}
+	_ = kubeInf.InformersForOrGlobal("default").Core().V1().Secrets().Informer().GetIndexer().Add(secret)
+
+	now := time.Now()
+	// Certificate in the proactive window (lifetime=64d, remains=30d), with an active pending order
+	certData := generateTestCertificate(t, []string{"example.com"}, now.Add(-34*24*time.Hour), now.Add(30*24*time.Hour))
+
+	route := &routev1.Route{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-route",
+			Namespace: "default",
+			Annotations: map[string]string{
+				"kubernetes.io/tls-acme":             "true",
+				"acme.openshift.io/cert-issuer-name": "test-issuer",
+				api.AcmeStatusAnnotation:             `{"provisioningStatus":{"orderURI":"` + ts.URL + `/order/1","orderStatus":"pending"}}`,
+			},
+		},
+		Spec: routev1.RouteSpec{
+			Host: "example.com",
+			TLS: &routev1.TLSConfig{
+				Certificate: string(certData.Crt),
+				Key:         string(certData.Key),
+			},
+		},
+		Status: routev1.RouteStatus{
+			Ingress: []routev1.RouteIngress{
+				{
+					Conditions: []routev1.RouteIngressCondition{
+						{
+							Type:   routev1.RouteAdmitted,
+							Status: corev1.ConditionTrue,
+						},
+					},
+				},
+			},
+		},
+	}
+	_, _ = routeClient.RouteV1().Routes("default").Create(context.Background(), route, metav1.CreateOptions{})
+	_ = routeInf.InformersForOrGlobal("default").Route().V1().Routes().Informer().GetIndexer().Add(route)
+
+	err := rc.sync(context.Background(), "default/test-route")
+	if err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+
+	if delay, ok := recorderQueue.addedAfter["default/test-route"]; ok {
+		t.Errorf("expected no long-horizon renewal requeue while continuing pending order, got %v", delay)
 	}
 }
