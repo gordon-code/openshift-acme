@@ -19,6 +19,7 @@ const (
 	AcmeExposerKey                                = "acme.openshift.io/exposer-key"
 	AcmeExposerUID                                = "acme.openshift.io/exposer-uid"
 	AcmeCertIssuerName                            = "acme.openshift.io/cert-issuer-name"
+	AcmeCertProfile                               = "acme.openshift.io/cert-profile"
 	AcmeSecretName                                = "acme.openshift.io/secret-name"
 )
 
@@ -43,6 +44,7 @@ type AcmeAccount struct {
 
 type AcmeCertIssuer struct {
 	DirectoryURL string      `json:"directoryURL"`
+	Profile      string      `json:"profile,omitempty"`
 	Account      AcmeAccount `json:"account"`
 }
 

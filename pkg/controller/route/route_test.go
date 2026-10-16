@@ -7,12 +7,13 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"flag"
 	"fmt"
+	"io"
 	"math/big"
-	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -458,34 +459,46 @@ func TestNeedsCertKey(t *testing.T) {
 
 	healthyCert := generateTestCertificate(t, []string{host}, now.Add(-20*24*time.Hour), now.Add(80*24*time.Hour))
 	renewalCert := generateTestCertificate(t, []string{host}, now.Add(-70*24*time.Hour), now.Add(30*24*time.Hour))
-	proactiveCert := generateTestCertificate(t, []string{host}, now.Add(-60*24*time.Hour), now.Add(40*24*time.Hour))
 	expiredCert := generateTestCertificate(t, []string{host}, now.Add(-1000*24*time.Hour), now.Add(-1*24*time.Hour))
 	mismatchedHostCert := generateTestCertificate(t, []string{"other.example.com"}, now.Add(-1*time.Hour), now.Add(1000*time.Hour))
 
-	// The proactive-renewal window (lifetime/3 < remains <= lifetime/2) is a
-	// coin flip seeded by rand.NewSource(t.UnixNano()). Rather than hardcode a
-	// magic timestamp that happens to land on one side, compute the expected
-	// outcome using the exact same seed/formula used by needsCertKey. This
-	// still catches regressions in needsCertKey's own comparison/arithmetic,
-	// since needsCertKey computes n independently at call time.
-	s := rand.NewSource(now.UnixNano())
-	r := rand.New(s)
-	n := r.NormFloat64()*RenewalStandardDeviation + RenewalMean
-	expectedProactiveReason := ""
-	expectedProactiveRequeue := 40*24*time.Hour - (100*24*time.Hour)/3
-	if n < 0 {
-		expectedProactiveReason = "Proactive renewal"
-		expectedProactiveRequeue = 0
+	// Generate a certificate and evaluate it both just inside and just outside its
+	// deterministic proactive renewal threshold in [lifetime/3, lifetime/2).
+	proactiveBaseCert := generateTestCertificate(t, []string{host}, now.Add(-60*24*time.Hour), now.Add(40*24*time.Hour))
+	parsedProactiveCert, err := proactiveBaseCert.Certificate()
+	if err != nil {
+		t.Fatalf("failed to parse proactive test cert: %v", err)
+	}
+	proactiveThreshold := proactiveRenewalThreshold(parsedProactiveCert, 100*24*time.Hour)
+	if proactiveThreshold < (100*24*time.Hour)/3 || proactiveThreshold >= (100*24*time.Hour)/2 {
+		t.Fatalf("expected proactiveThreshold in [lifetime/3, lifetime/2), got %v", proactiveThreshold)
 	}
 
-	// 64-day and 47-day Let's Encrypt certificate lifecycles
+	// 64-day, 47-day, and 160-hour (shortlived) Let's Encrypt certificate lifecycles
 	healthy64DayCert := generateTestCertificate(t, []string{host}, now.Add(-14*24*time.Hour), now.Add(50*24*time.Hour))
+	parsedHealthy64, _ := healthy64DayCert.Certificate()
+	threshold64 := proactiveRenewalThreshold(parsedHealthy64, 64*24*time.Hour)
+
 	renewal64DayCert := generateTestCertificate(t, []string{host}, now.Add(-44*24*time.Hour), now.Add(20*24*time.Hour))
+
 	healthy47DayCert := generateTestCertificate(t, []string{host}, now.Add(-7*24*time.Hour), now.Add(40*24*time.Hour))
+	parsedHealthy47, _ := healthy47DayCert.Certificate()
+	threshold47 := proactiveRenewalThreshold(parsedHealthy47, 47*24*time.Hour)
+
 	renewal47DayCert := generateTestCertificate(t, []string{host}, now.Add(-32*24*time.Hour), now.Add(15*24*time.Hour))
+
+	healthyShortLivedCert := generateTestCertificate(t, []string{host}, now.Add(-40*time.Hour), now.Add(120*time.Hour))
+	parsedHealthyShortLived, _ := healthyShortLivedCert.Certificate()
+	thresholdShortLived := proactiveRenewalThreshold(parsedHealthyShortLived, 160*time.Hour)
+
+	renewalShortLivedCert := generateTestCertificate(t, []string{host}, now.Add(-110*time.Hour), now.Add(50*time.Hour))
+
+	parsedHealthy100, _ := healthyCert.Certificate()
+	threshold100 := proactiveRenewalThreshold(parsedHealthy100, 100*24*time.Hour)
 
 	tt := []struct {
 		name            string
+		evalTime        time.Time
 		route           *routev1.Route
 		expectedReason  string
 		expectedRequeue time.Duration
@@ -493,25 +506,29 @@ func TestNeedsCertKey(t *testing.T) {
 	}{
 		{
 			name:           "missing CertKey - nil TLS",
+			evalTime:       now,
 			route:          &routev1.Route{Spec: routev1.RouteSpec{Host: host}},
 			expectedReason: "Route is missing CertKey",
 		},
 		{
-			name: "missing CertKey - empty cert and key",
+			name:     "missing CertKey - empty cert and key",
+			evalTime: now,
 			route: &routev1.Route{
 				Spec: routev1.RouteSpec{Host: host, TLS: &routev1.TLSConfig{}},
 			},
 			expectedReason: "Route is missing CertKey",
 		},
 		{
-			name: "missing CertKey - key present but certificate empty",
+			name:     "missing CertKey - key present but certificate empty",
+			evalTime: now,
 			route: &routev1.Route{
 				Spec: routev1.RouteSpec{Host: host, TLS: &routev1.TLSConfig{Key: "somekey"}},
 			},
 			expectedReason: "Route is missing CertKey",
 		},
 		{
-			name: "hostname mismatch",
+			name:     "hostname mismatch",
+			evalTime: now,
 			route: &routev1.Route{
 				Spec: routev1.RouteSpec{
 					Host: host,
@@ -524,7 +541,8 @@ func TestNeedsCertKey(t *testing.T) {
 			expectedReason: "Existing certificate doesn't match hostname",
 		},
 		{
-			name: "already expired",
+			name:     "already expired",
+			evalTime: now,
 			route: &routev1.Route{
 				Spec: routev1.RouteSpec{
 					Host: host,
@@ -537,7 +555,8 @@ func TestNeedsCertKey(t *testing.T) {
 			expectedReason: "Already expired",
 		},
 		{
-			name: "in renewal period",
+			name:     "in renewal period",
+			evalTime: now,
 			route: &routev1.Route{
 				Spec: routev1.RouteSpec{
 					Host: host,
@@ -550,21 +569,38 @@ func TestNeedsCertKey(t *testing.T) {
 			expectedReason: "In renewal period",
 		},
 		{
-			name: "proactive renewal window",
+			name:     "proactive renewal window - at deterministic threshold triggers renewal",
+			evalTime: parsedProactiveCert.NotAfter.Add(-proactiveThreshold),
 			route: &routev1.Route{
 				Spec: routev1.RouteSpec{
 					Host: host,
 					TLS: &routev1.TLSConfig{
-						Certificate: string(proactiveCert.Crt),
-						Key:         string(proactiveCert.Key),
+						Certificate: string(proactiveBaseCert.Crt),
+						Key:         string(proactiveBaseCert.Key),
 					},
 				},
 			},
-			expectedReason:  expectedProactiveReason,
-			expectedRequeue: expectedProactiveRequeue,
+			expectedReason:  "Proactive renewal",
+			expectedRequeue: 0,
 		},
 		{
-			name: "healthy cert - no renewal needed",
+			name:     "proactive renewal window - 1 hour before deterministic threshold schedules exact requeue",
+			evalTime: parsedProactiveCert.NotAfter.Add(-proactiveThreshold - time.Hour),
+			route: &routev1.Route{
+				Spec: routev1.RouteSpec{
+					Host: host,
+					TLS: &routev1.TLSConfig{
+						Certificate: string(proactiveBaseCert.Crt),
+						Key:         string(proactiveBaseCert.Key),
+					},
+				},
+			},
+			expectedReason:  "",
+			expectedRequeue: time.Hour,
+		},
+		{
+			name:     "healthy cert - no renewal needed",
+			evalTime: now,
 			route: &routev1.Route{
 				Spec: routev1.RouteSpec{
 					Host: host,
@@ -575,10 +611,11 @@ func TestNeedsCertKey(t *testing.T) {
 				},
 			},
 			expectedReason:  "",
-			expectedRequeue: 30 * 24 * time.Hour,
+			expectedRequeue: 80*24*time.Hour - threshold100,
 		},
 		{
-			name: "64-day cert - healthy schedules requeue at lifetime/2",
+			name:     "64-day cert - healthy schedules requeue at deterministic threshold",
+			evalTime: now,
 			route: &routev1.Route{
 				Spec: routev1.RouteSpec{
 					Host: host,
@@ -589,10 +626,11 @@ func TestNeedsCertKey(t *testing.T) {
 				},
 			},
 			expectedReason:  "",
-			expectedRequeue: 50*24*time.Hour - (64*24*time.Hour)/2,
+			expectedRequeue: 50*24*time.Hour - threshold64,
 		},
 		{
-			name: "64-day cert - in renewal period",
+			name:     "64-day cert - in renewal period",
+			evalTime: now,
 			route: &routev1.Route{
 				Spec: routev1.RouteSpec{
 					Host: host,
@@ -605,7 +643,8 @@ func TestNeedsCertKey(t *testing.T) {
 			expectedReason: "In renewal period",
 		},
 		{
-			name: "47-day cert - healthy schedules requeue at lifetime/2",
+			name:     "47-day cert - healthy schedules requeue at deterministic threshold",
+			evalTime: now,
 			route: &routev1.Route{
 				Spec: routev1.RouteSpec{
 					Host: host,
@@ -616,10 +655,11 @@ func TestNeedsCertKey(t *testing.T) {
 				},
 			},
 			expectedReason:  "",
-			expectedRequeue: 40*24*time.Hour - (47*24*time.Hour)/2,
+			expectedRequeue: 40*24*time.Hour - threshold47,
 		},
 		{
-			name: "47-day cert - in renewal period",
+			name:     "47-day cert - in renewal period",
+			evalTime: now,
 			route: &routev1.Route{
 				Spec: routev1.RouteSpec{
 					Host: host,
@@ -631,11 +671,40 @@ func TestNeedsCertKey(t *testing.T) {
 			},
 			expectedReason: "In renewal period",
 		},
+		{
+			name:     "shortlived 160h cert - healthy schedules requeue at deterministic threshold",
+			evalTime: now,
+			route: &routev1.Route{
+				Spec: routev1.RouteSpec{
+					Host: host,
+					TLS: &routev1.TLSConfig{
+						Certificate: string(healthyShortLivedCert.Crt),
+						Key:         string(healthyShortLivedCert.Key),
+					},
+				},
+			},
+			expectedReason:  "",
+			expectedRequeue: 120*time.Hour - thresholdShortLived,
+		},
+		{
+			name:     "shortlived 160h cert - in renewal period",
+			evalTime: now,
+			route: &routev1.Route{
+				Spec: routev1.RouteSpec{
+					Host: host,
+					TLS: &routev1.TLSConfig{
+						Certificate: string(renewalShortLivedCert.Crt),
+						Key:         string(renewalShortLivedCert.Key),
+					},
+				},
+			},
+			expectedReason: "In renewal period",
+		},
 	}
 
 	for _, tc := range tt {
 		t.Run(tc.name, func(t *testing.T) {
-			reason, requeueAfter, err := needsCertKey(now, tc.route)
+			reason, requeueAfter, err := needsCertKey(tc.evalTime, tc.route)
 
 			if !reflect.DeepEqual(err, tc.expectedErr) {
 				t.Errorf("expected error %v, got %v", tc.expectedErr, err)
@@ -867,8 +936,13 @@ func TestSync_SchedulesRenewalRequeueForHealthyCert(t *testing.T) {
 
 	now := time.Now()
 	// 47-day Let's Encrypt certificate issued 7 days ago (40 days remaining;
-	// proactive renewal window opens at 23.5 days remaining, ~16.5 days from now).
+	// proactive renewal window is [lifetime/3, lifetime/2)).
 	certData := generateTestCertificate(t, []string{"example.com"}, now.Add(-7*24*time.Hour), now.Add(40*24*time.Hour))
+	parsedCert, err := certData.Certificate()
+	if err != nil {
+		t.Fatalf("failed to parse test cert: %v", err)
+	}
+	threshold := proactiveRenewalThreshold(parsedCert, 47*24*time.Hour)
 
 	route := &routev1.Route{
 		ObjectMeta: metav1.ObjectMeta{
@@ -900,7 +974,7 @@ func TestSync_SchedulesRenewalRequeueForHealthyCert(t *testing.T) {
 	}
 	_ = routeInf.InformersForOrGlobal("default").Route().V1().Routes().Informer().GetIndexer().Add(route)
 
-	err := rc.sync(context.Background(), "default/test-route")
+	err = rc.sync(context.Background(), "default/test-route")
 	if err != nil {
 		t.Fatalf("sync failed: %v", err)
 	}
@@ -910,7 +984,7 @@ func TestSync_SchedulesRenewalRequeueForHealthyCert(t *testing.T) {
 		t.Fatal("expected Route to be scheduled via queue.AddAfter for future renewal check, but it was not")
 	}
 
-	expectedDelay := 40*24*time.Hour - (47*24*time.Hour)/2
+	expectedDelay := 40*24*time.Hour - threshold
 	// Allow a few seconds tolerance for wall-clock advancement between cert generation and sync().
 	if diff := delay - expectedDelay; diff < -10*time.Second || diff > 10*time.Second {
 		t.Errorf("expected requeue delay ~%v, got %v (diff %v)", expectedDelay, delay, diff)
@@ -959,8 +1033,8 @@ acmeCertIssuer:
 	_ = kubeInf.InformersForOrGlobal("default").Core().V1().Secrets().Informer().GetIndexer().Add(secret)
 
 	now := time.Now()
-	// Certificate in the proactive window (lifetime=64d, remains=30d), with an active pending order
-	certData := generateTestCertificate(t, []string{"example.com"}, now.Add(-34*24*time.Hour), now.Add(30*24*time.Hour))
+	// Healthy certificate (lifetime=64d, remains=50d) with an active pending order in flight
+	certData := generateTestCertificate(t, []string{"example.com"}, now.Add(-14*24*time.Hour), now.Add(50*24*time.Hour))
 
 	route := &routev1.Route{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1002,5 +1076,156 @@ acmeCertIssuer:
 
 	if delay, ok := recorderQueue.addedAfter["default/test-route"]; ok {
 		t.Errorf("expected no long-horizon renewal requeue while continuing pending order, got %v", delay)
+	}
+}
+
+func TestCertProfileForRoute(t *testing.T) {
+	issuerWithProfile := &api.AcmeCertIssuer{Profile: "tlsserver"}
+	issuerWithoutProfile := &api.AcmeCertIssuer{}
+
+	routeWithOverride := &routev1.Route{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				api.AcmeCertProfile: "shortlived",
+			},
+		},
+	}
+	routeWithoutOverride := &routev1.Route{}
+
+	if got := certProfileForRoute(routeWithOverride, issuerWithProfile); got != "shortlived" {
+		t.Errorf("expected route annotation override %q, got %q", "shortlived", got)
+	}
+	if got := certProfileForRoute(routeWithoutOverride, issuerWithProfile); got != "tlsserver" {
+		t.Errorf("expected issuer fallback %q, got %q", "tlsserver", got)
+	}
+	if got := certProfileForRoute(routeWithoutOverride, issuerWithoutProfile); got != "" {
+		t.Errorf("expected empty profile when neither route nor issuer sets one, got %q", got)
+	}
+}
+
+func TestSync_AuthorizeOrderWithProfile(t *testing.T) {
+	var receivedProfile string
+	var ts *httptest.Server
+	ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Replay-Nonce", "test-nonce")
+		switch r.URL.Path {
+		case "/directory":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{
+				"newNonce": %q,
+				"newAccount": %q,
+				"newOrder": %q,
+				"meta": {
+					"profiles": {
+						"classic": "Classic 64-day/45-day profile",
+						"tlsserver": "Modern 45-day profile",
+						"shortlived": "Short-lived 160-hour profile"
+					}
+				}
+			}`, ts.URL+"/new-nonce", ts.URL+"/new-account", ts.URL+"/new-order")
+		case "/new-nonce":
+			w.WriteHeader(http.StatusNoContent)
+		case "/new-account":
+			w.Header().Set("Location", ts.URL+"/account/1")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":"valid"}`))
+		case "/new-order":
+			body, _ := io.ReadAll(r.Body)
+			var jws struct {
+				Payload string `json:"payload"`
+			}
+			_ = json.Unmarshal(body, &jws)
+			payloadBytes, _ := base64.RawURLEncoding.DecodeString(jws.Payload)
+			var orderReq struct {
+				Profile string `json:"profile"`
+			}
+			_ = json.Unmarshal(payloadBytes, &orderReq)
+			receivedProfile = orderReq.Profile
+
+			w.Header().Set("Location", ts.URL+"/order/1")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprintf(w, `{"status":"pending","authorizations":[%q]}`, ts.URL+"/authz/1")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	rc, routeClient, kubeInf, routeInf := newTestRouteController()
+
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-issuer",
+			Namespace: "default",
+		},
+		Data: map[string]string{
+			"cert-issuer.types.acme.openshift.io": `type: ACME
+secretName: letsencrypt-live
+acmeCertIssuer:
+  directoryURL: ` + ts.URL + `/directory
+  profile: tlsserver`,
+		},
+	}
+	_ = kubeInf.InformersForOrGlobal("default").Core().V1().ConfigMaps().Informer().GetIndexer().Add(cm)
+
+	key, _ := rsa.GenerateKey(cryptorand.Reader, 2048)
+	keyPem := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "letsencrypt-live",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			corev1.TLSCertKey:       []byte(ts.URL),
+			corev1.TLSPrivateKeyKey: keyPem,
+		},
+	}
+	_ = kubeInf.InformersForOrGlobal("default").Core().V1().Secrets().Informer().GetIndexer().Add(secret)
+
+	route := &routev1.Route{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-route",
+			Namespace: "default",
+			Annotations: map[string]string{
+				"kubernetes.io/tls-acme":             "true",
+				"acme.openshift.io/cert-issuer-name": "test-issuer",
+				api.AcmeCertProfile:                  "shortlived",
+			},
+		},
+		Spec: routev1.RouteSpec{
+			Host: "example.com",
+		},
+		Status: routev1.RouteStatus{
+			Ingress: []routev1.RouteIngress{
+				{
+					Conditions: []routev1.RouteIngressCondition{
+						{
+							Type:   routev1.RouteAdmitted,
+							Status: corev1.ConditionTrue,
+						},
+					},
+				},
+			},
+		},
+	}
+	_, _ = routeClient.RouteV1().Routes("default").Create(context.Background(), route, metav1.CreateOptions{})
+	_ = routeInf.InformersForOrGlobal("default").Route().V1().Routes().Informer().GetIndexer().Add(route)
+
+	if err := rc.sync(context.Background(), "default/test-route"); err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+	if receivedProfile != "shortlived" {
+		t.Errorf("expected new-order payload to include profile %q, got %q", "shortlived", receivedProfile)
+	}
+
+	// Verify unsupported profile is rejected before order creation
+	routeUnsupported := route.DeepCopy()
+	routeUnsupported.Annotations[api.AcmeCertProfile] = "nonexistent-profile"
+	delete(routeUnsupported.Annotations, api.AcmeStatusAnnotation)
+	_ = routeInf.InformersForOrGlobal("default").Route().V1().Routes().Informer().GetIndexer().Update(routeUnsupported)
+
+	err := rc.sync(context.Background(), "default/test-route")
+	if err == nil || !strings.Contains(err.Error(), "does not advertise profile") {
+		t.Errorf("expected error for unsupported profile, got: %v", err)
 	}
 }

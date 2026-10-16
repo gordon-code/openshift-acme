@@ -46,6 +46,8 @@ OpenShift Routes are fully supported.
 
 If you annotate your Route with "acme.openshift.io/secret-name": "<secret_name>", the controller will synchronize the Route certificates into a Secret so you can use SSL in the passthrough mode and mount the secret into pods.
 
+You can also optionally select an [ACME certificate profile](https://letsencrypt.org/docs/profiles/) (such as Let's Encrypt's `classic`, `tlsserver`, or `shortlived` profiles) either per-Route with `"acme.openshift.io/cert-profile": "<profile>"` or as a default on the issuer ConfigMap via `"profile": "<profile>"` under `acmeCertIssuer`.
+
 ### Roadmap
 - Advanced rate limiting (there is now support for basic rate limits)
 - Ingress (and Kubernetes) support

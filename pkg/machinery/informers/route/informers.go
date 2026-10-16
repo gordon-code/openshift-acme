@@ -12,7 +12,7 @@ import (
 
 // DefaultResyncPeriod is the periodic resync interval for Route informers,
 // acting as a safety net alongside explicit renewal requeues.
-const DefaultResyncPeriod = 6 * time.Hour
+const DefaultResyncPeriod = 12 * time.Hour
 
 type Interface interface {
 	Start(stopCh <-chan struct{})
