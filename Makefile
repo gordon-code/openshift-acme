@@ -20,6 +20,10 @@ build:
 test:
 	go test $(GO_TEST_PACKAGES)
 
+.PHONY: test-staging
+test-staging:
+	RUN_LETSENCRYPT_STAGING_TESTS=1 go test -v -run TestLiveLetsEncryptStagingIntegration ./pkg/controller/route
+
 .PHONY: vet
 vet:
 	go vet ./...

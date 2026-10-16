@@ -16,12 +16,14 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"golang.org/x/crypto/acme"
 
 	routeclientset "github.com/openshift/client-go/route/clientset/versioned/fake"
 	"github.com/tnozicka/openshift-acme/pkg/api"
@@ -1227,5 +1229,158 @@ acmeCertIssuer:
 	err := rc.sync(context.Background(), "default/test-route")
 	if err == nil || !strings.Contains(err.Error(), "does not advertise profile") {
 		t.Errorf("expected error for unsupported profile, got: %v", err)
+	}
+}
+
+func TestLiveLetsEncryptStagingIntegration(t *testing.T) {
+	if os.Getenv("RUN_LETSENCRYPT_STAGING_TESTS") == "" {
+		t.Skip("skipping live Let's Encrypt Staging integration test; set RUN_LETSENCRYPT_STAGING_TESTS=1 to enable")
+	}
+
+	const stagingDirectoryURL = "https://acme-staging-v02.api.letsencrypt.org/directory"
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// 1. Register an ephemeral ACME account against live Let's Encrypt Staging
+	accountKey, err := rsa.GenerateKey(cryptorand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate RSA key: %v", err)
+	}
+	client := &acme.Client{
+		DirectoryURL: stagingDirectoryURL,
+		Key:          accountKey,
+		UserAgent:    "github.com/tnozicka/openshift-acme-ci-test",
+	}
+	account, err := client.Register(ctx, &acme.Account{}, acme.AcceptTOS)
+	if err != nil {
+		t.Fatalf("failed to register ephemeral account with Let's Encrypt Staging: %v", err)
+	}
+	t.Logf("Registered ephemeral Let's Encrypt Staging account: %s (status=%s)", account.URI, account.Status)
+
+	// Deactivate the ephemeral account when the test finishes so we leave Staging clean
+	defer func() {
+		deactivateCtx, deactivateCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer deactivateCancel()
+		if err := client.DeactivateReg(deactivateCtx); err != nil {
+			t.Logf("warning: failed to deactivate ephemeral staging account: %v", err)
+		} else {
+			t.Logf("Deactivated ephemeral Let's Encrypt Staging account: %s", account.URI)
+		}
+	}()
+
+	// 2. Set up RouteController backed by the live Let's Encrypt Staging issuer
+	rc, routeClient, kubeInf, routeInf := newTestRouteController()
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "letsencrypt-staging",
+			Namespace: "default",
+		},
+		Data: map[string]string{
+			"cert-issuer.types.acme.openshift.io": `type: ACME
+secretName: letsencrypt-staging
+acmeCertIssuer:
+  directoryURL: ` + stagingDirectoryURL,
+		},
+	}
+	_ = kubeInf.InformersForOrGlobal("default").Core().V1().ConfigMaps().Informer().GetIndexer().Add(cm)
+
+	keyPem := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(accountKey)})
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "letsencrypt-staging",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			corev1.TLSPrivateKeyKey: keyPem,
+		},
+	}
+	_ = kubeInf.InformersForOrGlobal("default").Core().V1().Secrets().Informer().GetIndexer().Add(secret)
+
+	profiles := []struct {
+		name        string
+		profile     string
+		expectError string
+	}{
+		{name: "default (no profile specified)", profile: ""},
+		{name: "classic profile (64-day)", profile: "classic"},
+		{name: "tlsserver profile (45-day)", profile: "tlsserver"},
+		{name: "shortlived profile (160-hour)", profile: "shortlived"},
+		{name: "invalid profile rejected via live directory check", profile: "invalid-profile-name", expectError: "does not advertise profile"},
+	}
+
+	for i, tc := range profiles {
+		t.Run(tc.name, func(t *testing.T) {
+			routeName := fmt.Sprintf("staging-route-%d", i)
+			domain := fmt.Sprintf("ci-%s-%d.openshift-acme-test.invalid", utilrand.String(8), i)
+			// Use a syntactically valid public-TLD domain for ACME order creation
+			domain = strings.TrimSuffix(domain, ".invalid") + ".com"
+
+			annotations := map[string]string{
+				"kubernetes.io/tls-acme":             "true",
+				"acme.openshift.io/cert-issuer-name": "letsencrypt-staging",
+			}
+			if tc.profile != "" {
+				annotations[api.AcmeCertProfile] = tc.profile
+			}
+
+			route := &routev1.Route{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        routeName,
+					Namespace:   "default",
+					Annotations: annotations,
+				},
+				Spec: routev1.RouteSpec{
+					Host: domain,
+				},
+				Status: routev1.RouteStatus{
+					Ingress: []routev1.RouteIngress{
+						{
+							Conditions: []routev1.RouteIngressCondition{
+								{
+									Type:   routev1.RouteAdmitted,
+									Status: corev1.ConditionTrue,
+								},
+							},
+						},
+					},
+				},
+			}
+			_, _ = routeClient.RouteV1().Routes("default").Create(ctx, route, metav1.CreateOptions{})
+			_ = routeInf.InformersForOrGlobal("default").Route().V1().Routes().Informer().GetIndexer().Add(route)
+
+			syncErr := rc.sync(ctx, "default/"+routeName)
+			if tc.expectError != "" {
+				if syncErr == nil || !strings.Contains(syncErr.Error(), tc.expectError) {
+					t.Fatalf("expected error containing %q, got: %v", tc.expectError, syncErr)
+				}
+				return
+			}
+			if syncErr != nil {
+				t.Fatalf("sync against Let's Encrypt Staging failed for profile %q: %v", tc.profile, syncErr)
+			}
+
+			updatedRoute, err := routeClient.RouteV1().Routes("default").Get(ctx, routeName, metav1.GetOptions{})
+			if err != nil {
+				t.Fatalf("failed to get updated Route: %v", err)
+			}
+			status, err := rc.getStatus(updatedRoute)
+			if err != nil {
+				t.Fatalf("failed to decode Route status: %v", err)
+			}
+			if status.ProvisioningStatus.OrderURI == "" {
+				t.Fatalf("expected non-empty OrderURI from Let's Encrypt Staging, got empty")
+			}
+			if status.ProvisioningStatus.OrderStatus != acme.StatusPending {
+				t.Errorf("expected OrderStatus %q, got %q", acme.StatusPending, status.ProvisioningStatus.OrderStatus)
+			}
+
+			// Fetch the raw order JSON from Let's Encrypt Staging to verify Boulder recorded the profile
+			order, err := client.GetOrder(ctx, status.ProvisioningStatus.OrderURI)
+			if err != nil {
+				t.Fatalf("failed to fetch created order %q from Let's Encrypt Staging: %v", status.ProvisioningStatus.OrderURI, err)
+			}
+			t.Logf("Profile %q -> OrderURI=%s Status=%s AuthzCount=%d Expires=%s",
+				tc.profile, status.ProvisioningStatus.OrderURI, order.Status, len(order.AuthzURLs), order.Expires.Format(time.RFC3339))
+		})
 	}
 }
