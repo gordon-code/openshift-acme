@@ -7,7 +7,7 @@ labels: kind/bug
 
 <!-- Please use this template while reporting a bug and provide as much info as possible. Not doing so may result in your bug not being addressed in a timely manner. Thanks!
 
-If the matter is security related, please disclose it privately via email to: tnozicka /at/ gmail /dot/ com .
+If the matter is security related, please disclose it privately via GitHub Security Advisories at https://github.com/gordon-code/openshift-acme/security/advisories/new .
 -->
 
 
@@ -23,5 +23,3 @@ If the matter is security related, please disclose it privately via email to: tn
 - OpenShift/Kubernetes version (use `oc/kubectl version`):
 - Others:
 
-
-@tnozicka

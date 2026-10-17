@@ -19,10 +19,10 @@ import (
 	kvalidationutil "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
-	"github.com/tnozicka/openshift-acme/pkg/cmd/genericclioptions"
-	cmdutil "github.com/tnozicka/openshift-acme/pkg/cmd/util"
-	"github.com/tnozicka/openshift-acme/pkg/httpserver"
-	"github.com/tnozicka/openshift-acme/pkg/signals"
+	"github.com/gordon-code/openshift-acme/pkg/cmd/genericclioptions"
+	cmdutil "github.com/gordon-code/openshift-acme/pkg/cmd/util"
+	"github.com/gordon-code/openshift-acme/pkg/httpserver"
+	"github.com/gordon-code/openshift-acme/pkg/signals"
 )
 
 type Options struct {

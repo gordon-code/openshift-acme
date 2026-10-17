@@ -3,15 +3,19 @@
 package route
 
 import (
+	"bytes"
 	"context"
+	"crypto"
 	cryptorand "crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base32"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"math/rand"
+	"io"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -48,21 +52,19 @@ import (
 	routeclientset "github.com/openshift/client-go/route/clientset/versioned"
 	_ "github.com/openshift/client-go/route/clientset/versioned/scheme"
 
-	"github.com/tnozicka/openshift-acme/pkg/api"
-	"github.com/tnozicka/openshift-acme/pkg/cert"
-	"github.com/tnozicka/openshift-acme/pkg/controllerutils"
-	"github.com/tnozicka/openshift-acme/pkg/helpers"
-	kubeinformers "github.com/tnozicka/openshift-acme/pkg/machinery/informers/kube"
-	routeinformers "github.com/tnozicka/openshift-acme/pkg/machinery/informers/route"
-	routeutil "github.com/tnozicka/openshift-acme/pkg/route"
-	"github.com/tnozicka/openshift-acme/pkg/util"
+	"github.com/gordon-code/openshift-acme/pkg/api"
+	"github.com/gordon-code/openshift-acme/pkg/cert"
+	"github.com/gordon-code/openshift-acme/pkg/controllerutils"
+	"github.com/gordon-code/openshift-acme/pkg/helpers"
+	kubeinformers "github.com/gordon-code/openshift-acme/pkg/machinery/informers/kube"
+	routeinformers "github.com/gordon-code/openshift-acme/pkg/machinery/informers/route"
+	routeutil "github.com/gordon-code/openshift-acme/pkg/route"
+	"github.com/gordon-code/openshift-acme/pkg/util"
 )
 
 const (
-	ControllerName           = "openshift-acme-controller"
-	ExposerFileKey           = "exposer-file"
-	RenewalStandardDeviation = 1
-	RenewalMean              = 0
+	ControllerName = "openshift-acme-controller"
+	ExposerFileKey = "exposer-file"
 	// BackoffGCInterval is the time that has to pass before next iteration of backoff GC is run
 	BackoffGCInterval = 1 * time.Minute
 )
@@ -78,6 +80,7 @@ type RouteController struct {
 	certOrderBackoffInitial  time.Duration
 	certOrderBackoffMax      time.Duration
 	certDefaultRSAKeyBitSize int
+	certDefaultProfile       string
 	exposerImage             string
 	controllerNamespace      string
 	acmeTimeout              time.Duration
@@ -101,6 +104,7 @@ func NewRouteController(
 	certOrderBackoffInitial time.Duration,
 	certOrderBackoffMax time.Duration,
 	certDefaultRSAKeyBitSize int,
+	certDefaultProfile string,
 	exposerImage string,
 	controllerNamespace string,
 	kubeClient kubernetes.Interface,
@@ -117,6 +121,7 @@ func NewRouteController(
 		certOrderBackoffInitial:  certOrderBackoffInitial,
 		certOrderBackoffMax:      certOrderBackoffMax,
 		certDefaultRSAKeyBitSize: certDefaultRSAKeyBitSize,
+		certDefaultProfile:       certDefaultProfile,
 		exposerImage:             exposerImage,
 		controllerNamespace:      controllerNamespace,
 		acmeTimeout:              60 * time.Second,
@@ -400,9 +405,25 @@ func (rc *RouteController) resolveControllerRef(namespace string, controllerRef 
 	return route
 }
 
-func needsCertKey(t time.Time, route *routev1.Route) (string, error) {
+// proactiveRenewalThreshold returns a deterministic remaining-validity threshold
+// in [lifetime/3, lifetime/2) for the given certificate. Seeding from the
+// certificate's DER bytes ensures that each certificate gets a stable, evenly
+// distributed renewal time across the proactive window without informer resyncs
+// or pod restarts skewing the probability.
+func proactiveRenewalThreshold(certificate *x509.Certificate, lifetime time.Duration) time.Duration {
+	window := lifetime/2 - lifetime/3
+	if window <= 0 {
+		return lifetime / 3
+	}
+
+	sum := sha256.Sum256(certificate.Raw)
+	offset := time.Duration(binary.BigEndian.Uint64(sum[:8]) % uint64(window))
+	return lifetime/3 + offset
+}
+
+func needsCertKey(t time.Time, route *routev1.Route) (string, time.Duration, error) {
 	if route.Spec.TLS == nil || route.Spec.TLS.Key == "" || route.Spec.TLS.Certificate == "" {
-		return "Route is missing CertKey", nil
+		return "Route is missing CertKey", 0, nil
 	}
 
 	certPemData := &cert.CertPemData{
@@ -411,43 +432,39 @@ func needsCertKey(t time.Time, route *routev1.Route) (string, error) {
 	}
 	certificate, err := certPemData.Certificate()
 	if err != nil {
-		return "", fmt.Errorf("can't decode certificate from Route %s/%s: %v", route.Namespace, route.Name, err)
+		return "", 0, fmt.Errorf("can't decode certificate from Route %s/%s: %v", route.Namespace, route.Name, err)
 	}
 
 	err = certificate.VerifyHostname(route.Spec.Host)
 	if err != nil {
 		klog.V(5).Info(err)
-		return "Existing certificate doesn't match hostname", nil
+		return "Existing certificate doesn't match hostname", 0, nil
 	}
 
 	if !cert.IsValid(certificate, t) {
-		return "Already expired", nil
+		return "Already expired", 0, nil
 	}
 
 	// We need to trigger renewals before the certs expire
 	remains := certificate.NotAfter.Sub(t)
 	lifetime := certificate.NotAfter.Sub(certificate.NotBefore)
 
-	// This is the deadline when we start renewing
+	// This is the deadline when we start renewing unconditionally
 	if remains <= lifetime/3 {
-		return "In renewal period", nil
+		return "In renewal period", 0, nil
 	}
 
-	// In case many certificates were provisioned at specific time
-	// We will try to avoid spikes by renewing randomly
-	if remains <= lifetime/2 {
-		// We need to randomize renewals to spread the load.
-		// Closer to deadline, bigger chance
-		s := rand.NewSource(t.UnixNano())
-		r := rand.New(s)
-		n := r.NormFloat64()*RenewalStandardDeviation + RenewalMean
-		// We use left half of normal distribution (all negative numbers).
-		if n < 0 {
-			return "Proactive renewal", nil
-		}
+	// Deterministic per-certificate renewal point in [lifetime/3, lifetime/2)
+	// spreads batch-provisioned certificates across the proactive window and
+	// remains repeatable across informer resyncs and controller restarts.
+	threshold := proactiveRenewalThreshold(certificate, lifetime)
+	if remains <= threshold {
+		return "Proactive renewal", 0, nil
 	}
 
-	return "", nil
+	// Healthy certificate before its renewal point; schedule re-evaluation
+	// for the exact moment its deterministic renewal threshold is reached.
+	return "", remains - threshold, nil
 }
 
 func (rc *RouteController) getStatus(routeReadOnly *routev1.Route) (*api.Status, error) {
@@ -563,7 +580,7 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 	}
 	status.ProvisioningStatus.EarliestAttemptAt = status.ProvisioningStatus.StartedAt.Add(backoff)
 
-	reason, err := needsCertKey(time.Now(), routeReadOnly)
+	reason, requeueAfter, err := needsCertKey(time.Now(), routeReadOnly)
 	if err != nil {
 		return err
 	}
@@ -574,6 +591,10 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 			reason = "Continuing pending order"
 		default:
 			klog.V(4).Infof("Route %q doesn't need new certificate.", key)
+			if requeueAfter > 0 {
+				klog.V(4).Infof("Scheduling next renewal check for Route %q in %v", key, requeueAfter)
+				rc.queue.AddAfter(key, requeueAfter)
+			}
 			if status.ProvisioningStatus.OrderURI != "" || status.ProvisioningStatus.OrderStatus != "" {
 				status.ProvisioningStatus.OrderURI = ""
 				status.ProvisioningStatus.OrderStatus = ""
@@ -625,13 +646,17 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 
 	acmeClient := &acme.Client{
 		DirectoryURL: acmeIssuer.DirectoryURL,
-		UserAgent:    "github.com/tnozicka/openshift-acme",
+		UserAgent:    "github.com/gordon-code/openshift-acme",
 	}
 	klog.V(4).Infof("Using ACME client with DirectoryURL %q", acmeClient.DirectoryURL)
 
 	acmeClient.Key, err = helpers.PrivateKeyFromSecret(certIssuerSecret)
 	if err != nil {
 		return err
+	}
+	if profile := certProfileForRoute(routeReadOnly, rc.certDefaultProfile); profile != "" {
+		klog.V(4).Infof("Route %q: requesting ACME certificate profile %q", key, profile)
+		acmeClient.HTTPClient = acmeHTTPClientWithProfile(profile, acmeClient.Key)
 	}
 
 	domain := routeReadOnly.Spec.Host
@@ -1467,6 +1492,140 @@ func GetSyncSecretName(route *routev1.Route) (string, bool) {
 	}
 
 	return secretName, true
+}
+
+func certProfileForRoute(route *routev1.Route, defaultProfile string) string {
+	if route != nil && route.Annotations != nil {
+		if profile := strings.TrimSpace(route.Annotations[api.AcmeCertProfile]); profile != "" {
+			return profile
+		}
+	}
+	return strings.TrimSpace(defaultProfile)
+}
+
+// acmeProfileRoundTripper intercepts ACME newOrder JWS POST requests (and the
+// ACME Directory response) to support draft-ietf-acme-profiles:
+//  1. It validates that the CA's Directory meta.profiles advertises the
+//     requested profile (returning a clear error if profiles are unsupported
+//     or the profile name is unknown).
+//  2. It injects `"profile": <profile>` into the newOrder JWS payload and
+//     re-signs the JWS using the account key.
+type acmeProfileRoundTripper struct {
+	base    http.RoundTripper
+	profile string
+	key     crypto.Signer
+
+	mu       sync.Mutex
+	orderURL string
+}
+
+func acmeHTTPClientWithProfile(profile string, key crypto.Signer) *http.Client {
+	return &http.Client{
+		Transport: &acmeProfileRoundTripper{
+			base:    http.DefaultTransport,
+			profile: profile,
+			key:     key,
+		},
+	}
+}
+
+func (rt *acmeProfileRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method == http.MethodGet {
+		resp, err := rt.base.RoundTrip(req)
+		if err != nil || resp.StatusCode != http.StatusOK || resp.Body == nil {
+			return resp, err
+		}
+
+		bodyBytes, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		if readErr != nil {
+			return resp, nil
+		}
+
+		var dir struct {
+			NewOrder string `json:"newOrder"`
+			Meta     struct {
+				Profiles map[string]string `json:"profiles"`
+			} `json:"meta"`
+		}
+		if json.Unmarshal(bodyBytes, &dir) == nil && dir.NewOrder != "" {
+			if len(dir.Meta.Profiles) == 0 {
+				return nil, fmt.Errorf("acme: certificate authority does not advertise support for profiles (requested %q)", rt.profile)
+			}
+			if _, ok := dir.Meta.Profiles[rt.profile]; !ok {
+				return nil, fmt.Errorf("acme: certificate authority does not advertise profile %q", rt.profile)
+			}
+			rt.mu.Lock()
+			rt.orderURL = dir.NewOrder
+			rt.mu.Unlock()
+		}
+		return resp, nil
+	}
+
+	rt.mu.Lock()
+	orderURL := rt.orderURL
+	rt.mu.Unlock()
+
+	if req.Method == http.MethodPost && orderURL != "" && req.URL.String() == orderURL && req.Body != nil {
+		bodyBytes, err := io.ReadAll(req.Body)
+		_ = req.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+
+		rewritten, err := rewriteNewOrderJWSWithProfile(bodyBytes, rt.profile, rt.key)
+		if err != nil {
+			return nil, err
+		}
+
+		req = req.Clone(req.Context())
+		req.Body = io.NopCloser(bytes.NewReader(rewritten))
+		req.ContentLength = int64(len(rewritten))
+	}
+
+	return rt.base.RoundTrip(req)
+}
+
+func rewriteNewOrderJWSWithProfile(jwsBytes []byte, profile string, key crypto.Signer) ([]byte, error) {
+	var jws struct {
+		Protected string `json:"protected"`
+		Payload   string `json:"payload"`
+		Signature string `json:"signature"`
+	}
+	if err := json.Unmarshal(jwsBytes, &jws); err != nil {
+		return nil, fmt.Errorf("acme: can't decode newOrder JWS: %w", err)
+	}
+	if jws.Payload == "" {
+		return jwsBytes, nil
+	}
+
+	payloadJSON, err := base64.RawURLEncoding.DecodeString(jws.Payload)
+	if err != nil {
+		return nil, fmt.Errorf("acme: can't decode newOrder JWS payload: %w", err)
+	}
+
+	var claims map[string]interface{}
+	if err := json.Unmarshal(payloadJSON, &claims); err != nil {
+		return nil, fmt.Errorf("acme: can't unmarshal newOrder claims: %w", err)
+	}
+
+	claims["profile"] = profile
+	newPayloadJSON, err := json.Marshal(claims)
+	if err != nil {
+		return nil, fmt.Errorf("acme: can't marshal newOrder claims with profile: %w", err)
+	}
+
+	jws.Payload = base64.RawURLEncoding.EncodeToString(newPayloadJSON)
+	signingInput := []byte(jws.Protected + "." + jws.Payload)
+	digest := sha256.Sum256(signingInput)
+	sig, err := key.Sign(cryptorand.Reader, digest[:], crypto.SHA256)
+	if err != nil {
+		return nil, fmt.Errorf("acme: can't sign newOrder JWS with profile: %w", err)
+	}
+	jws.Signature = base64.RawURLEncoding.EncodeToString(sig)
+
+	return json.Marshal(&jws)
 }
 
 // exposerPodSecurityContext returns the Pod-level SecurityContext used by the

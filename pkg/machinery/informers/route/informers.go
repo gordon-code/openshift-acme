@@ -3,10 +3,16 @@
 package route
 
 import (
+	"time"
+
 	routeclientset "github.com/openshift/client-go/route/clientset/versioned"
 	routeinformers "github.com/openshift/client-go/route/informers/externalversions"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+// DefaultResyncPeriod is the periodic resync interval for Route informers,
+// acting as a safety net alongside explicit renewal requeues.
+const DefaultResyncPeriod = 12 * time.Hour
 
 type Interface interface {
 	Start(stopCh <-chan struct{})
@@ -23,7 +29,7 @@ func NewRouteInformersForNamespaces(routeClient routeclientset.Interface, namesp
 	res := routeInformersForNamespaces{}
 
 	for _, namespace := range namespaces {
-		res[namespace] = routeinformers.NewSharedInformerFactoryWithOptions(routeClient, 0, routeinformers.WithNamespace(namespace))
+		res[namespace] = routeinformers.NewSharedInformerFactoryWithOptions(routeClient, DefaultResyncPeriod, routeinformers.WithNamespace(namespace))
 	}
 
 	return res

@@ -18,6 +18,8 @@ jobs:
   verify:
     name: Build, test, and lint
     uses: ./.github/workflows/verify.yaml
+    with:
+      run-staging-tests: false
 
   publish:
     name: Build and push images to ghcr.io

@@ -11,14 +11,14 @@ import (
 	"strconv"
 
 	"github.com/ghodss/yaml"
-	"github.com/tnozicka/openshift-acme/pkg/util"
+	"github.com/gordon-code/openshift-acme/pkg/util"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 
+	"github.com/gordon-code/openshift-acme/pkg/api"
+	kubeinformers "github.com/gordon-code/openshift-acme/pkg/machinery/informers/kube"
 	_ "github.com/openshift/client-go/route/clientset/versioned/scheme"
-	"github.com/tnozicka/openshift-acme/pkg/api"
-	kubeinformers "github.com/tnozicka/openshift-acme/pkg/machinery/informers/kube"
 )
 
 func getIssuerConfigMapsForObject(obj metav1.ObjectMeta, globalIssuerNamesapce string, kubeInformersForNamespaces kubeinformers.Interface) ([]*corev1.ConfigMap, error) {

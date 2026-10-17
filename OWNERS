@@ -3,13 +3,5 @@
 filters:
   ".*":
     approvers:
-    - tnozicka
-
-  "^\\.glide.(lock|yaml)$":
-    labels:
-    - "vendor-update"
-
-  "^vendor/.*":
-    labels:
-    - "vendor-update"
- 
+    - gordon-code
+    - wgordon17

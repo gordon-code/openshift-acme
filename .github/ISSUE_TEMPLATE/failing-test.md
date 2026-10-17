@@ -19,5 +19,3 @@ labels: kind/failing-test
 
 **Anything else we need to know**:
 
-
-@tnozicka

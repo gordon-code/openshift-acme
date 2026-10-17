@@ -10,5 +10,3 @@ labels: kind/feature
 
 **Why is this needed**:
 
-
-@tnozicka

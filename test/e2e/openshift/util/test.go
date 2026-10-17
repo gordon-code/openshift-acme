@@ -15,7 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 
-	"github.com/tnozicka/openshift-acme/test/e2e/framework"
+	"github.com/gordon-code/openshift-acme/test/e2e/framework"
 )
 
 var TestContext *framework.TestContextType = &framework.TestContext
