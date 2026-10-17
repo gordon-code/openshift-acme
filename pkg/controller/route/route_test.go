@@ -767,6 +767,7 @@ func newTestRouteController() (*RouteController, *routeclientset.Clientset, kube
 		1*time.Second,
 		1*time.Minute,
 		2048,
+		"",
 		"exposer:latest",
 		"default",
 		kubeClient,
@@ -1082,9 +1083,6 @@ acmeCertIssuer:
 }
 
 func TestCertProfileForRoute(t *testing.T) {
-	issuerWithProfile := &api.AcmeCertIssuer{Profile: "tlsserver"}
-	issuerWithoutProfile := &api.AcmeCertIssuer{}
-
 	routeWithOverride := &routev1.Route{
 		ObjectMeta: metav1.ObjectMeta{
 			Annotations: map[string]string{
@@ -1094,14 +1092,14 @@ func TestCertProfileForRoute(t *testing.T) {
 	}
 	routeWithoutOverride := &routev1.Route{}
 
-	if got := certProfileForRoute(routeWithOverride, issuerWithProfile); got != "shortlived" {
+	if got := certProfileForRoute(routeWithOverride, "tlsserver"); got != "shortlived" {
 		t.Errorf("expected route annotation override %q, got %q", "shortlived", got)
 	}
-	if got := certProfileForRoute(routeWithoutOverride, issuerWithProfile); got != "tlsserver" {
-		t.Errorf("expected issuer fallback %q, got %q", "tlsserver", got)
+	if got := certProfileForRoute(routeWithoutOverride, "tlsserver"); got != "tlsserver" {
+		t.Errorf("expected default profile fallback %q, got %q", "tlsserver", got)
 	}
-	if got := certProfileForRoute(routeWithoutOverride, issuerWithoutProfile); got != "" {
-		t.Errorf("expected empty profile when neither route nor issuer sets one, got %q", got)
+	if got := certProfileForRoute(routeWithoutOverride, ""); got != "" {
+		t.Errorf("expected empty profile when neither route nor default sets one, got %q", got)
 	}
 }
 
@@ -1154,6 +1152,7 @@ func TestSync_AuthorizeOrderWithProfile(t *testing.T) {
 	defer ts.Close()
 
 	rc, routeClient, kubeInf, routeInf := newTestRouteController()
+	rc.certDefaultProfile = "tlsserver"
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1164,8 +1163,7 @@ func TestSync_AuthorizeOrderWithProfile(t *testing.T) {
 			"cert-issuer.types.acme.openshift.io": `type: ACME
 secretName: letsencrypt-live
 acmeCertIssuer:
-  directoryURL: ` + ts.URL + `/directory
-  profile: tlsserver`,
+  directoryURL: ` + ts.URL + `/directory`,
 		},
 	}
 	_ = kubeInf.InformersForOrGlobal("default").Core().V1().ConfigMaps().Informer().GetIndexer().Add(cm)
@@ -1217,7 +1215,20 @@ acmeCertIssuer:
 		t.Fatalf("sync failed: %v", err)
 	}
 	if receivedProfile != "shortlived" {
-		t.Errorf("expected new-order payload to include profile %q, got %q", "shortlived", receivedProfile)
+		t.Errorf("expected new-order payload to include route override profile %q, got %q", "shortlived", receivedProfile)
+	}
+
+	// Verify controller default profile is used when Route annotation is omitted
+	routeDefaultProfile := route.DeepCopy()
+	delete(routeDefaultProfile.Annotations, api.AcmeCertProfile)
+	delete(routeDefaultProfile.Annotations, api.AcmeStatusAnnotation)
+	_ = routeInf.InformersForOrGlobal("default").Route().V1().Routes().Informer().GetIndexer().Update(routeDefaultProfile)
+
+	if err := rc.sync(context.Background(), "default/test-route"); err != nil {
+		t.Fatalf("sync with default profile failed: %v", err)
+	}
+	if receivedProfile != "tlsserver" {
+		t.Errorf("expected new-order payload to include controller default profile %q, got %q", "tlsserver", receivedProfile)
 	}
 
 	// Verify unsupported profile is rejected before order creation

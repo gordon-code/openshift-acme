@@ -80,6 +80,7 @@ type RouteController struct {
 	certOrderBackoffInitial  time.Duration
 	certOrderBackoffMax      time.Duration
 	certDefaultRSAKeyBitSize int
+	certDefaultProfile       string
 	exposerImage             string
 	controllerNamespace      string
 	acmeTimeout              time.Duration
@@ -103,6 +104,7 @@ func NewRouteController(
 	certOrderBackoffInitial time.Duration,
 	certOrderBackoffMax time.Duration,
 	certDefaultRSAKeyBitSize int,
+	certDefaultProfile string,
 	exposerImage string,
 	controllerNamespace string,
 	kubeClient kubernetes.Interface,
@@ -119,6 +121,7 @@ func NewRouteController(
 		certOrderBackoffInitial:  certOrderBackoffInitial,
 		certOrderBackoffMax:      certOrderBackoffMax,
 		certDefaultRSAKeyBitSize: certDefaultRSAKeyBitSize,
+		certDefaultProfile:       certDefaultProfile,
 		exposerImage:             exposerImage,
 		controllerNamespace:      controllerNamespace,
 		acmeTimeout:              60 * time.Second,
@@ -651,7 +654,7 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 	if err != nil {
 		return err
 	}
-	if profile := certProfileForRoute(routeReadOnly, acmeIssuer); profile != "" {
+	if profile := certProfileForRoute(routeReadOnly, rc.certDefaultProfile); profile != "" {
 		klog.V(4).Infof("Route %q: requesting ACME certificate profile %q", key, profile)
 		acmeClient.HTTPClient = acmeHTTPClientWithProfile(profile, acmeClient.Key)
 	}
@@ -1491,16 +1494,13 @@ func GetSyncSecretName(route *routev1.Route) (string, bool) {
 	return secretName, true
 }
 
-func certProfileForRoute(route *routev1.Route, acmeIssuer *api.AcmeCertIssuer) string {
+func certProfileForRoute(route *routev1.Route, defaultProfile string) string {
 	if route != nil && route.Annotations != nil {
 		if profile := strings.TrimSpace(route.Annotations[api.AcmeCertProfile]); profile != "" {
 			return profile
 		}
 	}
-	if acmeIssuer != nil {
-		return strings.TrimSpace(acmeIssuer.Profile)
-	}
-	return ""
+	return strings.TrimSpace(defaultProfile)
 }
 
 // acmeProfileRoundTripper intercepts ACME newOrder JWS POST requests (and the

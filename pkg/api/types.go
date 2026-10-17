@@ -44,7 +44,6 @@ type AcmeAccount struct {
 
 type AcmeCertIssuer struct {
 	DirectoryURL string      `json:"directoryURL"`
-	Profile      string      `json:"profile,omitempty"`
 	Account      AcmeAccount `json:"account"`
 }
 

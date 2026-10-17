@@ -37,6 +37,10 @@ import (
 	"k8s.io/klog/v2"
 )
 
+const (
+	DefaultExposerImage = "ghcr.io/gordon-code/openshift-acme-exposer:latest"
+)
+
 type Options struct {
 	genericclioptions.IOStreams
 
@@ -52,6 +56,7 @@ type Options struct {
 	CertOrderBackoffInitial     time.Duration
 	CertOrderBackoffMax         time.Duration
 	CertDefaultRSAKeyBitSize    int
+	CertDefaultProfile          string
 	Namespaces                  []string
 	AcmeOrderTimeout            time.Duration
 
@@ -75,11 +80,12 @@ func NewOptions(streams genericclioptions.IOStreams) *Options {
 		CertOrderBackoffInitial:     5 * time.Minute,
 		CertOrderBackoffMax:         24 * time.Hour,
 		CertDefaultRSAKeyBitSize:    4096,
+		CertDefaultProfile:          "",
 
 		Annotation:       api.DefaultTLSAcmeAnnotation,
 		AcmeOrderTimeout: 15 * time.Minute,
 
-		ExposerImage: "",
+		ExposerImage: DefaultExposerImage,
 
 		Namespaces: []string{metav1.NamespaceAll},
 	}
@@ -119,6 +125,16 @@ func NewOpenshiftAcmeControllerCommand(streams genericclioptions.IOStreams) *cob
 				return err
 			}
 
+			// Support legacy OPENSHIFT_ACME_EXPOSER_IMAGE env var when --exposer-image
+			// (or OPENSHIFT_ACME_CONTROLLER_EXPOSER_IMAGE) was not explicitly set.
+			if f := cmd.Flags().Lookup("exposer-image"); f != nil && !f.Changed {
+				if ei, ok := os.LookupEnv("OPENSHIFT_ACME_EXPOSER_IMAGE"); ok {
+					if err := f.Value.Set(ei); err != nil {
+						return err
+					}
+				}
+			}
+
 			return nil
 		},
 		SilenceErrors: true,
@@ -140,6 +156,7 @@ func NewOpenshiftAcmeControllerCommand(streams genericclioptions.IOStreams) *cob
 	rootCmd.PersistentFlags().DurationVar(&o.CertOrderBackoffInitial, "cert-order-backoff-initial", o.CertOrderBackoffInitial, "Initial value for the exponential backoff guarding retrying failed orders.")
 	rootCmd.PersistentFlags().DurationVar(&o.CertOrderBackoffMax, "cert-order-backoff-max", o.CertOrderBackoffMax, "The upper limit for for the exponential backoff guarding retrying failed orders.")
 	rootCmd.PersistentFlags().IntVar(&o.CertDefaultRSAKeyBitSize, "cert-default-rsa-key-bit-size", o.CertDefaultRSAKeyBitSize, "The default RSA key bit size for new certificates.")
+	rootCmd.PersistentFlags().StringVar(&o.CertDefaultProfile, "cert-default-profile", o.CertDefaultProfile, "The default ACME certificate profile (e.g. classic, tlsserver, shortlived) for new certificates when not overridden by the Route annotation.")
 
 	rootCmd.PersistentFlags().StringVarP(&o.ExposerImage, "exposer-image", "", o.ExposerImage, "Image to use for exposing tokens for http based validation. (In standard configuration this contains openshift-acme-exposer binary, but the API is generic.)")
 
@@ -347,7 +364,7 @@ func (o *Options) Run(cmd *cobra.Command, streams genericclioptions.IOStreams) e
 
 	ac := acmeissuer.NewAccountController(o.kubeClient, kubeInformersForNamespaces)
 
-	rc := routecontroller.NewRouteController(o.Annotation, o.CertOrderBackoffInitial, o.CertOrderBackoffMax, o.CertDefaultRSAKeyBitSize, o.ExposerImage, o.ControllerNamespace, o.kubeClient, kubeInformersForNamespaces, o.routeClient, routeInformersForNamespaces)
+	rc := routecontroller.NewRouteController(o.Annotation, o.CertOrderBackoffInitial, o.CertOrderBackoffMax, o.CertDefaultRSAKeyBitSize, o.CertDefaultProfile, o.ExposerImage, o.ControllerNamespace, o.kubeClient, kubeInformersForNamespaces, o.routeClient, routeInformersForNamespaces)
 
 	kubeInformersForNamespaces.Start(stopCh)
 	routeInformersForNamespaces.Start(stopCh)

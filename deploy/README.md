@@ -19,8 +19,8 @@ Let's encrypt provides two environments: **live** and **staging**. The environme
 
 ### Certificate Profiles (`classic`, `tlsserver`, `shortlived`)
 Let's Encrypt supports [ACME certificate profiles](https://letsencrypt.org/docs/profiles/). By default, no profile is sent and the CA uses its default (`classic`: 90-day → 64-day → 45-day validity). You can opt into a specific profile in two ways:
-- **Per-Issuer default:** Set `"profile": "tlsserver"` (or `"shortlived"`) inside `acmeCertIssuer` in the issuer `ConfigMap`.
-- **Per-Route override:** Add the annotation `acme.openshift.io/cert-profile: "tlsserver"` (or `"shortlived"`) to an individual `Route`.
+- **Controller-wide default:** Pass `--cert-default-profile=tlsserver` (or `shortlived`) to `openshift-acme-controller`, or set the `OPENSHIFT_ACME_CONTROLLER_CERT_DEFAULT_PROFILE` environment variable on the Deployment.
+- **Per-Route override:** Add the annotation `acme.openshift.io/cert-profile: "tlsserver"` (or `"shortlived"`) to an individual `Route` (overrides `--cert-default-profile`).
 
 Certificate renewal windows (`[lifetime/3, lifetime/2)`) and workqueue scheduling scale automatically with each certificate's actual `NotBefore`/`NotAfter` validity—including 64-day, 45/47-day (`tlsserver`), and 160-hour (`shortlived`) certificates—using a deterministic per-certificate renewal threshold to spread load without renewal spikes.
 
