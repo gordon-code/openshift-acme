@@ -1,4 +1,4 @@
-module github.com/tnozicka/openshift-acme
+module github.com/gordon-code/openshift-acme
 
 go 1.26.0
 

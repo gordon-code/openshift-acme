@@ -14,8 +14,8 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 
-	api "github.com/tnozicka/openshift-acme/pkg/api"
-	"github.com/tnozicka/openshift-acme/pkg/machinery/informers/kube"
+	api "github.com/gordon-code/openshift-acme/pkg/api"
+	"github.com/gordon-code/openshift-acme/pkg/machinery/informers/kube"
 	"gopkg.in/yaml.v2"
 )
 

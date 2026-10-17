@@ -1,7 +1,13 @@
 name: Verify
 
 on:
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      run-staging-tests:
+        description: "Run live integration tests against Let's Encrypt Staging"
+        type: boolean
+        required: false
+        default: true
 
 permissions:
   contents: read
@@ -28,6 +34,7 @@ jobs:
         run: go test ./cmd/... ./pkg/...
 
       - name: Integration test against Let's Encrypt Staging
+        if: inputs.run-staging-tests
         run: make test-staging
 
       - name: Lint

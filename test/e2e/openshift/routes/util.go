@@ -25,7 +25,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	watchtools "k8s.io/client-go/tools/watch"
 
-	"github.com/tnozicka/openshift-acme/pkg/cert"
+	"github.com/gordon-code/openshift-acme/pkg/cert"
 )
 
 func generateCertificate(hosts []string, notBefore, notAfter time.Time) (*cert.CertPemData, error) {

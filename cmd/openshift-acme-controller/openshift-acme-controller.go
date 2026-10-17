@@ -14,8 +14,8 @@ import (
 
 	routev1 "github.com/openshift/api/route/v1"
 
-	"github.com/tnozicka/openshift-acme/pkg/cmd/genericclioptions"
-	cmd "github.com/tnozicka/openshift-acme/pkg/cmd/openshift-acme-controller"
+	"github.com/gordon-code/openshift-acme/pkg/cmd/genericclioptions"
+	cmd "github.com/gordon-code/openshift-acme/pkg/cmd/openshift-acme-controller"
 )
 
 func init() {
