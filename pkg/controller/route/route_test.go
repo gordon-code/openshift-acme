@@ -1559,3 +1559,159 @@ acmeCertIssuer:
 		})
 	}
 }
+
+func TestSync_ReadyOrderPersistsStatusAndResetsFailures(t *testing.T) {
+	now := time.Now()
+	issuedCert := generateTestCertificate(t, []string{"example.com"}, now.Add(-1*time.Hour), now.Add(64*24*time.Hour))
+
+	var orderQueries int
+	var ts *httptest.Server
+	ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Replay-Nonce", "test-nonce")
+		switch r.URL.Path {
+		case "/directory":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{
+				"newNonce": %q,
+				"newAccount": %q,
+				"newOrder": %q
+			}`, ts.URL+"/new-nonce", ts.URL+"/new-account", ts.URL+"/new-order")
+		case "/new-nonce":
+			w.WriteHeader(http.StatusNoContent)
+		case "/order/1":
+			orderQueries++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"status":"ready","finalize":%q}`, ts.URL+"/finalize/1")
+		case "/finalize/1":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"status":"valid","certificate":%q}`, ts.URL+"/cert/1")
+		case "/cert/1":
+			w.Header().Set("Content-Type", "application/pem-certificate-chain")
+			_, _ = w.Write(issuedCert.Crt)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	rc, routeClient, kubeInf, routeInf := newTestRouteController()
+	recorderQueue := &recordingRateLimitingQueue{
+		TypedRateLimitingInterface: rc.queue,
+		addedAfter:                 make(map[string]time.Duration),
+	}
+	rc.queue = recorderQueue
+
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-issuer",
+			Namespace: "default",
+		},
+		Data: map[string]string{
+			"cert-issuer.types.acme.openshift.io": `type: ACME
+secretName: letsencrypt-live
+acmeCertIssuer:
+  directoryURL: ` + ts.URL + `/directory`,
+		},
+	}
+	_ = kubeInf.InformersForOrGlobal("default").Core().V1().ConfigMaps().Informer().GetIndexer().Add(cm)
+
+	key, err := rsa.GenerateKey(cryptorand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate RSA key: %v", err)
+	}
+	keyPem := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "letsencrypt-live",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			corev1.TLSCertKey:       []byte(ts.URL),
+			corev1.TLSPrivateKeyKey: keyPem,
+		},
+	}
+	_ = kubeInf.InformersForOrGlobal("default").Core().V1().Secrets().Informer().GetIndexer().Add(secret)
+
+	route := &routev1.Route{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-route",
+			Namespace: "default",
+			Annotations: map[string]string{
+				"kubernetes.io/tls-acme":             "true",
+				"acme.openshift.io/cert-issuer-name": "test-issuer",
+				api.AcmeStatusAnnotation:             `{"provisioningStatus":{"orderURI":"` + ts.URL + `/order/1","orderStatus":"ready","failures":3}}`,
+			},
+		},
+		Spec: routev1.RouteSpec{
+			Host: "example.com",
+		},
+		Status: routev1.RouteStatus{
+			Ingress: []routev1.RouteIngress{
+				{
+					Conditions: []routev1.RouteIngressCondition{
+						{
+							Type:   routev1.RouteAdmitted,
+							Status: corev1.ConditionTrue,
+						},
+					},
+				},
+			},
+		},
+	}
+	_, _ = routeClient.RouteV1().Routes("default").Create(context.Background(), route, metav1.CreateOptions{})
+	_ = routeInf.InformersForOrGlobal("default").Route().V1().Routes().Informer().GetIndexer().Add(route)
+
+	// 1. First sync finalizes the ready order and persists both TLS cert/key and OrderStatus=valid (Failures=0)
+	if err := rc.sync(context.Background(), "default/test-route"); err != nil {
+		t.Fatalf("first sync failed: %v", err)
+	}
+
+	updatedRoute, err := routeClient.RouteV1().Routes("default").Get(context.Background(), "test-route", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("failed to get updated Route: %v", err)
+	}
+	if updatedRoute.Spec.TLS == nil || updatedRoute.Spec.TLS.Certificate == "" || updatedRoute.Spec.TLS.Key == "" {
+		t.Fatalf("expected Route TLS certificate and key to be populated, got: %+v", updatedRoute.Spec.TLS)
+	}
+	statusAfterCert, err := rc.getStatus(updatedRoute)
+	if err != nil {
+		t.Fatalf("failed to decode status after cert issuance: %v", err)
+	}
+	if statusAfterCert.ProvisioningStatus.OrderStatus != acme.StatusValid {
+		t.Errorf("expected OrderStatus %q to be persisted with certificate update, got %q", acme.StatusValid, statusAfterCert.ProvisioningStatus.OrderStatus)
+	}
+	if statusAfterCert.ProvisioningStatus.Failures != 0 {
+		t.Errorf("expected Failures to be reset to 0 after successful issuance, got %d", statusAfterCert.ProvisioningStatus.Failures)
+	}
+
+	// 2. Subsequent sync (triggered by the Route Update watch event) must NOT re-query the ACME
+	// order or hit the orphaned-Valid-order path; it should clear OrderURI/OrderStatus and schedule
+	// the renewal requeue.
+	_ = routeInf.InformersForOrGlobal("default").Route().V1().Routes().Informer().GetIndexer().Update(updatedRoute)
+	orderQueriesBeforeSecondSync := orderQueries
+	if err := rc.sync(context.Background(), "default/test-route"); err != nil {
+		t.Fatalf("second sync failed: %v", err)
+	}
+	if orderQueries != orderQueriesBeforeSecondSync {
+		t.Errorf("expected second sync not to query ACME order endpoint, but orderQueries increased from %d to %d", orderQueriesBeforeSecondSync, orderQueries)
+	}
+	if _, ok := recorderQueue.addedAfter["default/test-route"]; !ok {
+		t.Errorf("expected second sync to schedule deterministic renewal requeue via queue.AddAfter")
+	}
+
+	finalRoute, err := routeClient.RouteV1().Routes("default").Get(context.Background(), "test-route", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("failed to get final Route: %v", err)
+	}
+	finalStatus, err := rc.getStatus(finalRoute)
+	if err != nil {
+		t.Fatalf("failed to decode final status: %v", err)
+	}
+	if finalStatus.ProvisioningStatus.OrderURI != "" || finalStatus.ProvisioningStatus.OrderStatus != "" {
+		t.Errorf("expected OrderURI and OrderStatus to be cleared on settled Route, got OrderURI=%q OrderStatus=%q",
+			finalStatus.ProvisioningStatus.OrderURI, finalStatus.ProvisioningStatus.OrderStatus)
+	}
+	if finalStatus.ProvisioningStatus.Failures != 0 {
+		t.Errorf("expected Failures to remain 0 on settled Route, got %d", finalStatus.ProvisioningStatus.Failures)
+	}
+}
