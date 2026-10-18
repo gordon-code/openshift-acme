@@ -1147,28 +1147,12 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 			return fmt.Errorf("can't convert certificate from DER to PEM: %v", err)
 		}
 
-		route := routeReadOnly.DeepCopy()
-
 		// unfortunately golang acmeClient.CreateOrderCert waits internally for transitioning state
 		// to valid and we need to reflect it in our state machine because we don't get back
 		// into the provisioning phase again after the certs are updated and valid.
 		status.ProvisioningStatus.OrderStatus = acme.StatusValid
-
-		// We are updating the route and to avoid conflicts later we will also update the status together
-		err = setStatus(&route.ObjectMeta, status)
-		if err != nil {
-			return fmt.Errorf("can't set status: %w", err)
-		}
-
-		if route.Spec.TLS == nil {
-			route.Spec.TLS = &routev1.TLSConfig{
-				// Defaults
-				InsecureEdgeTerminationPolicy: routev1.InsecureEdgeTerminationPolicyRedirect,
-				Termination:                   routev1.TLSTerminationEdge,
-			}
-		}
-		route.Spec.TLS.Key = string(certPemData.Key)
-		route.Spec.TLS.Certificate = string(certPemData.Crt)
+		status.ProvisioningStatus.Failures = 0
+		status.ProvisioningStatus.OrderError = nil
 
 		// Use RetryOnConflict to prevent dropping the in-memory private key and
 		// burning Let's Encrypt rate limits on transient Kubernetes update conflicts.
@@ -1176,6 +1160,11 @@ func (rc *RouteController) sync(ctx context.Context, key string) error {
 			freshRoute, getErr := rc.routeClient.RouteV1().Routes(routeReadOnly.Namespace).Get(ctx, routeReadOnly.Name, metav1.GetOptions{})
 			if getErr != nil {
 				return getErr
+			}
+
+			// We are updating the route and to avoid conflicts later we will also update the status together
+			if statusErr := setStatus(&freshRoute.ObjectMeta, status); statusErr != nil {
+				return fmt.Errorf("can't set status: %w", statusErr)
 			}
 
 			if freshRoute.Spec.TLS == nil {
