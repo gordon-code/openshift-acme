@@ -45,3 +45,7 @@ jobs:
 
       - name: Verify deploy consistency
         run: make verify-deploy-consistency
+
+      - name: Verify container image builds
+        if: inputs.run-staging-tests
+        run: make images

@@ -1,13 +1,14 @@
-# ubi9/go-toolset:1.25 (1.25.9-1778675823)
-FROM registry.access.redhat.com/ubi9/go-toolset:1.25@sha256:90a36bc2013b3fcb28e2a4b082c9b895d7c2c679e58b95aed9721970f3339d0e AS builder
+# ubi9/go-toolset:1.26.7 (1.26.7-1792010711)
+FROM registry.access.redhat.com/ubi9/go-toolset:1.26.7@sha256:60fd6fb2998c40ad0d6561c34e83588b986a0cf7771f64e5e5c295ba87101f9b AS builder
+ENV GOTOOLCHAIN=auto
 WORKDIR /workspace
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -o openshift-acme-controller ./cmd/openshift-acme-controller
 
-# ubi9/ubi-minimal:9.8-1787647261
-FROM registry.access.redhat.com/ubi9/ubi-minimal:latest@sha256:580752f96d36c4132bffd30f9c34865bf4bd87f6aa161c969d117f21732e50f7
+# ubi9/ubi-minimal:9.8-1791898448
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest@sha256:c4c285d42941ebb2bd4da878479008e1e4536bb599aad1dbe568f89de9053661
 COPY --from=builder /workspace/openshift-acme-controller /usr/bin/openshift-acme-controller
 USER 1001
 ENTRYPOINT ["/usr/bin/openshift-acme-controller"]

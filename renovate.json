@@ -6,6 +6,15 @@
   "packageRules": [
     {
       "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "registry.access.redhat.com/ubi9/go-toolset"
+      ],
+      "allowedVersions": "/^1\\.\\d+(\\.\\d+)?$/"
+    },
+    {
+      "matchDatasources": [
         "golang-version",
         "go",
         "docker",
