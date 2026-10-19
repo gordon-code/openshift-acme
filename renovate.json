@@ -3,6 +3,9 @@
   "description": [
     "Managed by khepri-deps/renovate \u2014 global config provides weekly Monday schedule, 14-day release cooldown, and vulnerability alert bypass."
   ],
+  "extends": [
+    "customManagers:makefileVersions"
+  ],
   "packageRules": [
     {
       "matchDatasources": [
@@ -18,7 +21,8 @@
         "golang-version",
         "go",
         "docker",
-        "github-tags"
+        "github-tags",
+        "github-releases"
       ],
       "matchPackageNames": [
         "go",
