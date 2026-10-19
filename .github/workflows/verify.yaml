@@ -28,23 +28,17 @@ jobs:
           go-version-file: 'go.mod'
 
       - name: Build
-        run: go build ./cmd/... ./pkg/...
+        run: make build
 
       - name: Test
-        run: go test ./cmd/... ./pkg/...
+        run: make test
 
       - name: Integration test against Let's Encrypt Staging
         if: inputs.run-staging-tests
         run: make test-staging
 
-      - name: Lint
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
-        with:
-          version: v2.14.0
-          args: ./cmd/... ./pkg/...
-
-      - name: Verify deploy consistency
-        run: make verify-deploy-consistency
+      - name: Verify
+        run: make verify
 
       - name: Verify container image builds
         if: inputs.run-staging-tests

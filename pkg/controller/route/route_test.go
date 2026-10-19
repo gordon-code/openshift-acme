@@ -24,7 +24,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	"golang.org/x/crypto/acme"
 
 	"github.com/gordon-code/openshift-acme/pkg/api"
@@ -312,7 +311,7 @@ func TestAdjustContainerResourceRequirements(t *testing.T) {
 			}
 
 			if !apiequality.Semantic.DeepEqual(tc.resourceRequirements, tc.expectedResourceRequirements) {
-				t.Errorf("actual ResourceRequirements expected ones, diff: %s", cmp.Diff(tc.expectedResourceRequirements, tc.resourceRequirements))
+				t.Errorf("actual ResourceRequirements differed from expected: expected %+v, got %+v", tc.expectedResourceRequirements, tc.resourceRequirements)
 			}
 		})
 	}
@@ -349,7 +348,7 @@ func TestFilterOutAnnotations(t *testing.T) {
 			filterOutAnnotations(tc.annotations)
 
 			if !apiequality.Semantic.DeepEqual(tc.annotations, tc.expectedAnnotations) {
-				t.Errorf("expected annotations differ: %s", cmp.Diff(tc.expectedAnnotations, tc.annotations))
+				t.Errorf("expected annotations differ: expected %+v, got %+v", tc.expectedAnnotations, tc.annotations)
 			}
 		})
 	}
@@ -396,11 +395,11 @@ func TestFilterOutLabels(t *testing.T) {
 			filterOutLabels(tc.labels, tc.annotations)
 
 			if !reflect.DeepEqual(tc.annotations, annotationsCopy) {
-				t.Errorf("annotations were changed: %s", cmp.Diff(annotationsCopy, tc.annotations))
+				t.Errorf("annotations were changed: expected %+v, got %+v", annotationsCopy, tc.annotations)
 			}
 
 			if !apiequality.Semantic.DeepEqual(tc.labels, tc.expectedLabels) {
-				t.Errorf("expected labels differ: %s", cmp.Diff(tc.expectedLabels, tc.labels))
+				t.Errorf("expected labels differ: expected %+v, got %+v", tc.expectedLabels, tc.labels)
 			}
 		})
 	}
@@ -735,7 +734,7 @@ func TestExposerPodSecurityContext(t *testing.T) {
 	got := exposerPodSecurityContext()
 
 	if !apiequality.Semantic.DeepEqual(got, expected) {
-		t.Errorf("unexpected PodSecurityContext, diff: %s", cmp.Diff(expected, got))
+		t.Errorf("unexpected PodSecurityContext: expected %+v, got %+v", expected, got)
 	}
 }
 
@@ -753,7 +752,7 @@ func TestExposerContainerSecurityContext(t *testing.T) {
 	got := exposerContainerSecurityContext()
 
 	if !apiequality.Semantic.DeepEqual(got, expected) {
-		t.Errorf("unexpected SecurityContext, diff: %s", cmp.Diff(expected, got))
+		t.Errorf("unexpected SecurityContext: expected %+v, got %+v", expected, got)
 	}
 }
 

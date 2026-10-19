@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ghodss/yaml"
 	"golang.org/x/crypto/acme"
 
 	corev1 "k8s.io/api/core/v1"
@@ -31,6 +30,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/yaml"
 
 	"github.com/gordon-code/openshift-acme/pkg/api"
 	"github.com/gordon-code/openshift-acme/pkg/helpers"

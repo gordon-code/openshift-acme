@@ -16,7 +16,7 @@ import (
 
 	api "github.com/gordon-code/openshift-acme/pkg/api"
 	"github.com/gordon-code/openshift-acme/pkg/machinery/informers/kube"
-	"gopkg.in/yaml.v2"
+	"sigs.k8s.io/yaml"
 )
 
 func TestAccountController_Sync_ContextTimeout(t *testing.T) {
