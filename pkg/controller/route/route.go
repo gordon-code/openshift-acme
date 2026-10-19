@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -23,10 +24,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/davecgh/go-spew/spew"
-	"github.com/ghodss/yaml"
 	"golang.org/x/crypto/acme"
-	"gopkg.in/inf.v0"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -47,6 +45,7 @@ import (
 	"k8s.io/client-go/util/retry"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/yaml"
 
 	routev1 "github.com/openshift/api/route/v1"
 	routeclientset "github.com/openshift/client-go/route/clientset/versioned"
@@ -496,7 +495,7 @@ func (rc *RouteController) updateStatus(ctx context.Context, routeReadOnly *rout
 		return nil
 	}
 
-	klog.V(4).Info(spew.Sprintf("Updating status for Route %s/%s to %#v", newRoute.Namespace, newRoute.Name, status))
+	klog.V(4).Infof("Updating status for Route %s/%s to %#v", newRoute.Namespace, newRoute.Name, status)
 
 	statusBytes, err := json.Marshal(status)
 	if err != nil {
@@ -1676,11 +1675,10 @@ func adjustContainerResourceRequirements(requirements *corev1.ResourceRequiremen
 			memoryRequest, memoryRequestPresent := requirements.Requests[corev1.ResourceMemory]
 			memoryLimit, memoryLimitPresent := requirements.Limits[corev1.ResourceMemory]
 			if memoryRangeRequestRatioPresent && memoryRequestPresent && memoryLimitPresent {
-				observerRatio := new(inf.Dec).QuoRound(memoryLimit.AsDec(), memoryRequest.AsDec(), 3, inf.RoundHalfDown)
-				if observerRatio.Cmp(memoryRangeRequestRatio.AsDec()) == 1 { // more
-					res := new(inf.Dec).QuoRound(memoryLimit.AsDec(), memoryRangeRequestRatio.AsDec(), 3, inf.RoundHalfDown)
-					unscaled, _ := res.Unscaled()
-					requirements.Requests[corev1.ResourceMemory] = *resource.NewScaledQuantity(unscaled, resource.Scale(res.Scale()*-1))
+				observerRatio := quoMilliRoundHalfDown(memoryLimit, memoryRequest)
+				if observerRatio > memoryRangeRequestRatio.MilliValue() { // more
+					res := quoMilliRoundHalfDown(memoryLimit, memoryRangeRequestRatio)
+					requirements.Requests[corev1.ResourceMemory] = *resource.NewScaledQuantity(res, resource.Milli)
 				}
 			}
 
@@ -1708,17 +1706,35 @@ func adjustContainerResourceRequirements(requirements *corev1.ResourceRequiremen
 			cpuRequest, cpuRequestPresent := requirements.Requests[corev1.ResourceCPU]
 			cpuLimit, cpuLimitPresent := requirements.Limits[corev1.ResourceCPU]
 			if cpuRangeRequestRatioPresent && cpuRequestPresent && cpuLimitPresent {
-				observerRatio := new(inf.Dec).QuoRound(cpuLimit.AsDec(), cpuRequest.AsDec(), 3, inf.RoundHalfDown)
-				if observerRatio.Cmp(cpuRangeRequestRatio.AsDec()) == 1 { // more
-					res := new(inf.Dec).QuoRound(cpuLimit.AsDec(), cpuRangeRequestRatio.AsDec(), 3, inf.RoundHalfDown)
-					unscaled, _ := res.Unscaled()
-					requirements.Requests[corev1.ResourceCPU] = *resource.NewScaledQuantity(unscaled, resource.Scale(res.Scale()*-1))
+				observerRatio := quoMilliRoundHalfDown(cpuLimit, cpuRequest)
+				if observerRatio > cpuRangeRequestRatio.MilliValue() { // more
+					res := quoMilliRoundHalfDown(cpuLimit, cpuRangeRequestRatio)
+					requirements.Requests[corev1.ResourceCPU] = *resource.NewScaledQuantity(res, resource.Milli)
 				}
 			}
 		}
 	}
 
 	return apierrors.NewAggregate(errors)
+}
+
+func quoMilliRoundHalfDown(num, denom resource.Quantity) int64 {
+	denomMilli := denom.MilliValue()
+	if denomMilli == 0 {
+		return 0
+	}
+	n := new(big.Int).Mul(big.NewInt(num.MilliValue()), big.NewInt(1000))
+	d := big.NewInt(denomMilli)
+	q, r := new(big.Int).QuoRem(n, d, new(big.Int))
+	twoR := new(big.Int).Mul(big.NewInt(2), new(big.Int).Abs(r))
+	if twoR.Cmp(new(big.Int).Abs(d)) > 0 {
+		if (n.Sign() >= 0) == (d.Sign() >= 0) {
+			q.Add(q, big.NewInt(1))
+		} else {
+			q.Sub(q, big.NewInt(1))
+		}
+	}
+	return q.Int64()
 }
 
 func filterOutAnnotations(annotations map[string]string) {

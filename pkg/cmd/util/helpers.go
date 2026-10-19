@@ -6,12 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
-	"github.com/spf13/pflag"
-	"k8s.io/apimachinery/pkg/util/errors"
-
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
 )
 
@@ -32,27 +31,38 @@ func NormalizeNameForEnvVar(name string) string {
 
 func ReadFlagsFromEnv(prefix string, cmd *cobra.Command) error {
 	var errs []error
-	cmd.Flags().VisitAll(func(f *pflag.Flag) {
-		if f.Changed {
-			// flags always take precedence over environment
-			return
+	flags := cmd.Flags()
+	environ := os.Environ()
+	sort.Strings(environ)
+
+	for _, entry := range environ {
+		envVarName, v, ok := strings.Cut(entry, "=")
+		if !ok || !strings.HasPrefix(envVarName, prefix) {
+			continue
 		}
 
-		// See if there exists matching environment variable
-		envVarName := NormalizeNameForEnvVar(prefix + f.Name)
-		v, exists := os.LookupEnv(envVarName)
-		if !exists {
-			return
+		rawName := strings.ToLower(strings.TrimPrefix(envVarName, prefix))
+		f := flags.Lookup(strings.ReplaceAll(rawName, "_", "-"))
+		if f == nil {
+			f = flags.Lookup(rawName)
+		}
+		if f == nil || NormalizeNameForEnvVar(prefix+f.Name) != envVarName {
+			continue
+		}
+
+		if f.Changed {
+			// flags always take precedence over environment
+			continue
 		}
 
 		err := f.Value.Set(v)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("can't parse env var %q with value %q into flag %q: %v", envVarName, v, f.Name, err))
-			return
+			continue
 		}
 
 		f.Changed = true
-	})
+	}
 
 	return errors.NewAggregate(errs)
 }

@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	"k8s.io/klog/v2"
 )
 
@@ -69,7 +68,7 @@ func TestNewServer(t *testing.T) {
 			}
 
 			if !reflect.DeepEqual(tc.server.uriToResponse, s.uriToResponse) {
-				t.Errorf("%s", cmp.Diff(tc.server.uriToResponse, s.uriToResponse))
+				t.Errorf("expected %+v, got %+v", tc.server.uriToResponse, s.uriToResponse)
 			}
 		})
 	}
@@ -106,7 +105,7 @@ func TestParseData(t *testing.T) {
 			}
 
 			if !reflect.DeepEqual(tc.uriToResponse, s.uriToResponse) {
-				t.Error(cmp.Diff(tc.uriToResponse, s.uriToResponse))
+				t.Errorf("expected %+v, got %+v", tc.uriToResponse, s.uriToResponse)
 			}
 		})
 	}
@@ -188,7 +187,7 @@ func TestRun(t *testing.T) {
 
 					receivedData := string(body)
 					if expectedData != receivedData {
-						t.Error(cmp.Diff(expectedData, receivedData))
+						t.Errorf("expected %q, got %q", expectedData, receivedData)
 					}
 				})
 			}

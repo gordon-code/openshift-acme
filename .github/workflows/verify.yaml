@@ -27,8 +27,15 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
+      - name: Verify go.mod and go.sum
+        run: |
+          go mod tidy -diff
+          go mod verify
+
       - name: Build
-        run: go build ./cmd/... ./pkg/...
+        run: |
+          go build ./cmd/... ./pkg/...
+          go test -run=^$ ./test/...
 
       - name: Test
         run: go test ./cmd/... ./pkg/...

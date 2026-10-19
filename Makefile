@@ -32,12 +32,17 @@ vet:
 lint:
 	$(GOLANGCI_LINT) run ./cmd/... ./pkg/...
 
+.PHONY: verify-gomod
+verify-gomod:
+	go mod tidy -diff
+	go mod verify
+
 .PHONY: verify-deploy-consistency
 verify-deploy-consistency:
 	hack/verify-deploy-consistency.sh
 
 .PHONY: verify
-verify: vet lint verify-deploy-consistency
+verify: verify-gomod vet lint verify-deploy-consistency
 
 .PHONY: image-controller
 image-controller:

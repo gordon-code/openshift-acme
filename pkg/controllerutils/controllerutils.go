@@ -10,11 +10,11 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/ghodss/yaml"
 	"github.com/gordon-code/openshift-acme/pkg/util"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
+	"sigs.k8s.io/yaml"
 
 	"github.com/gordon-code/openshift-acme/pkg/api"
 	kubeinformers "github.com/gordon-code/openshift-acme/pkg/machinery/informers/kube"
