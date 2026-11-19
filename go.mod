@@ -3,17 +3,17 @@ module github.com/gordon-code/openshift-acme
 go 1.26.0
 
 require (
-	github.com/onsi/ginkgo/v2 v2.33.1
+	github.com/onsi/ginkgo/v2 v2.34.0
 	github.com/onsi/gomega v1.44.0
 	github.com/openshift/api v0.0.0-20260827112852-2c17c596bd4b
 	github.com/openshift/client-go v0.0.0-20260818144019-860af65a7cbc
 	github.com/prometheus/client_golang v1.25.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.58.0
-	k8s.io/api v0.37.1
-	k8s.io/apimachinery v0.37.1
-	k8s.io/apiserver v0.37.1
-	k8s.io/client-go v0.37.1
+	k8s.io/api v0.37.2
+	k8s.io/apimachinery v0.37.2
+	k8s.io/apiserver v0.37.2
+	k8s.io/client-go v0.37.2
 	k8s.io/klog/v2 v2.140.0
 	sigs.k8s.io/yaml v1.6.0
 )
